@@ -7,7 +7,11 @@ pnpm-debug.log*
 
 # Local docs / scratch artifacts
 AppIdea.docx
+AppIdea.txt
 ~$*.docx
+Arista-Zetic-Workflow-Summary.txt
+Cloudinary-Firestore-Hackathon-Workflow.txt
+Unified-Architecture-Arista-Zetic-Cloudinary-Firebase.txt
 
 # Node / Expo
 **/node_modules/
