@@ -1,9 +1,10 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Linking, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import Svg, { Defs, LinearGradient, Path, Stop, Text as SvgText } from 'react-native-svg';
+import { Alert, Linking, Modal, NativeModules, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import Svg, { Circle, Defs, LinearGradient, Path, Stop, Text as SvgText } from 'react-native-svg';
 import * as Location from 'expo-location';
 import * as Contacts from 'expo-contacts';
+import * as AppleHealthKitModule from 'react-native-health';
 import MapView, { Marker } from 'react-native-maps';
 import { getNextDemoScore, getScorePresentation } from './src/services/scoringService';
 import { fetchCurrentWeather } from './src/services/weatherService';
@@ -22,53 +23,144 @@ const QUICK_ACTIONS = [
   { label: 'Track Activity', icon: '↟' },
   { label: 'How am I feeling', icon: '☺' },
 ];
-const INSIGHTS_TABS = QUICK_ACTIONS.map((action) => action.label) as [
-  'Log Glucose',
-  'Log Heart Rate',
-  'Log Stress',
-  'Track Meal',
-  'Track Activity',
-  'How am I feeling',
-];
+const INSIGHTS_TABS = [
+  'Heart Rate',
+  'Resting Heart Rate',
+  'Heart Rate Variability',
+  'Respiratory Rate',
+  'Blood Oxygen',
+  'Steps',
+  'Walking + Running Distance',
+  'Flights Climbed',
+  'Active Energy',
+  'Basal Energy',
+  'Exercise Time',
+  'Stand Time',
+  'Sleep',
+  'Mindfulness',
+  'Body Temperature',
+  'Weight',
+  'VO2 Max',
+  'Blood Glucose',
+] as const;
 type InsightTab = (typeof INSIGHTS_TABS)[number];
 
-const INSIGHTS_TAB_CONTENT: Record<InsightTab, { title: string; summary: string; trend: string; recommendation: string }> = {
-  'Log Glucose': {
-    title: 'Glucose Pattern',
-    summary: 'Post-lunch values are trending above baseline this week.',
-    trend: 'Trend: +8% vs last 7 days',
-    recommendation: 'Try a 10-minute walk after meals to reduce spikes.',
+const INSIGHT_GROUPS = [
+  {
+    id: 'cardio',
+    title: 'Cardiovascular',
+    subtitle: 'Heart rhythm, oxygen delivery, and breathing efficiency.',
+    color: '#7DA2C7',
+    tabs: ['Heart Rate', 'Resting Heart Rate', 'Heart Rate Variability', 'Blood Oxygen', 'Respiratory Rate'] as InsightTab[],
   },
-  'Log Heart Rate': {
-    title: 'Heart Rate Recovery',
-    summary: 'Resting heart rate is stable with slight improvement overnight.',
-    trend: 'Trend: -2 bpm average',
-    recommendation: 'Maintain hydration and keep bedtime consistent.',
+  {
+    id: 'activity',
+    title: 'Activity + Energy',
+    subtitle: 'Movement volume, effort, and daily energy expenditure.',
+    color: '#7CB89B',
+    tabs: [
+      'Steps',
+      'Walking + Running Distance',
+      'Flights Climbed',
+      'Active Energy',
+      'Basal Energy',
+      'Exercise Time',
+      'Stand Time',
+      'VO2 Max',
+    ] as InsightTab[],
   },
-  'Log Stress': {
-    title: 'Stress Signals',
-    summary: 'Stress peaks most often between 2pm and 5pm on weekdays.',
-    trend: 'Trend: 3 high-stress windows this week',
-    recommendation: 'Schedule a 5-minute breathing break before afternoon workload.',
+  {
+    id: 'recovery',
+    title: 'Recovery + Mind',
+    subtitle: 'Sleep quality, stress reset, and mental recovery signals.',
+    color: '#9B8FC6',
+    tabs: ['Sleep', 'Mindfulness'] as InsightTab[],
   },
-  'Track Meal': {
-    title: 'Meal Quality Snapshot',
-    summary: 'Balanced meals correlate with better evening energy scores.',
-    trend: 'Trend: 4/6 days balanced',
-    recommendation: 'Add protein + fiber to late-day meals to avoid crashes.',
+  {
+    id: 'body',
+    title: 'Body Metrics',
+    subtitle: 'Core physiological measures and metabolic health markers.',
+    color: '#C7A77D',
+    tabs: ['Body Temperature', 'Weight', 'Blood Glucose'] as InsightTab[],
   },
-  'Track Activity': {
-    title: 'Movement Consistency',
-    summary: 'You are most active on Tuesdays and Thursdays.',
-    trend: 'Trend: 6,842 avg daily steps',
-    recommendation: 'Set a short walk reminder for lower-activity days.',
-  },
-  'How am I feeling': {
-    title: 'Mood Reflection',
-    summary: 'Mood entries improve after higher sleep quality nights.',
-    trend: 'Trend: Positive mood 5/7 days',
-    recommendation: 'Continue evening wind-down to support mood stability.',
-  },
+] as const;
+
+type InsightContent = {
+  title: string;
+  summary: string;
+  trend: string;
+  recommendation: string;
+  trendPoints: number[];
+  trendLabels: string[];
+  trendUnit: string;
+};
+
+const INSIGHT_UNITS: Record<InsightTab, string> = {
+  'Heart Rate': 'bpm',
+  'Resting Heart Rate': 'bpm',
+  'Heart Rate Variability': 'ms',
+  'Respiratory Rate': 'br/min',
+  'Blood Oxygen': '%',
+  Steps: 'steps',
+  'Walking + Running Distance': 'mi',
+  'Flights Climbed': 'floors',
+  'Active Energy': 'kcal',
+  'Basal Energy': 'kcal',
+  'Exercise Time': 'min',
+  'Stand Time': 'min',
+  Sleep: 'h',
+  Mindfulness: 'sessions',
+  'Body Temperature': 'degF',
+  Weight: 'lb',
+  'VO2 Max': 'mL/kg/min',
+  'Blood Glucose': 'mg/dL',
+};
+
+const INSIGHTS_TAB_CONTENT: Record<InsightTab, InsightContent> = INSIGHTS_TABS.reduce((acc, tab) => {
+  acc[tab] = {
+    title: tab,
+    summary: `Connect Apple Health to view ${tab.toLowerCase()} data.`,
+    trend: 'Trend: unavailable',
+    recommendation: `Track ${tab.toLowerCase()} consistently for stronger trends.`,
+    trendPoints: [0, 0, 0, 0, 0, 0, 0],
+    trendLabels: ['M', 'T', 'W', 'T', 'F', 'S', 'S'],
+    trendUnit: INSIGHT_UNITS[tab],
+  };
+  return acc;
+}, {} as Record<InsightTab, InsightContent>);
+
+const QUICK_ACTION_METRIC_OPTIONS: InsightTab[] = [
+  'Heart Rate',
+  'Steps',
+  'Sleep',
+  'Active Energy',
+  'Mindfulness',
+  'Blood Glucose',
+  'Resting Heart Rate',
+  'Walking + Running Distance',
+  'Exercise Time',
+  'Blood Oxygen',
+];
+const DASHBOARD_QUICK_ACTION_SLOTS = 6;
+const QUICK_ACTION_ICON_BY_TAB: Record<InsightTab, string> = {
+  'Heart Rate': '♥',
+  'Resting Heart Rate': '♡',
+  'Heart Rate Variability': '≈',
+  'Respiratory Rate': '◔',
+  'Blood Oxygen': '◉',
+  Steps: '↟',
+  'Walking + Running Distance': '⇄',
+  'Flights Climbed': '⇡',
+  'Active Energy': '⚡',
+  'Basal Energy': '◌',
+  'Exercise Time': '⌛',
+  'Stand Time': '↕',
+  Sleep: '☾',
+  Mindfulness: '☯',
+  'Body Temperature': '◍',
+  Weight: '◒',
+  'VO2 Max': '◎',
+  'Blood Glucose': '◈',
 };
 
 const ACTIVITY = [
@@ -94,11 +186,18 @@ type GoalsTab = (typeof GOALS_TABS)[number];
 const CHALLENGE_FILTERS = ['All', 'Personal', 'Community'] as const;
 type ChallengeFilter = (typeof CHALLENGE_FILTERS)[number];
 
-const GOALS_CHALLENGES = [
+type GoalChallenge = {
+  title: string;
+  detail: string;
+  members: string;
+  type: 'personal' | 'community';
+};
+
+const GOALS_CHALLENGES: GoalChallenge[] = [
   { title: 'Campus Hydration Week', detail: 'Community goal: 10k cups logged', members: '248 joined', type: 'community' },
   { title: 'Indoor Movement Streak', detail: 'When AQI is rough, move inside', members: '132 joined', type: 'community' },
   { title: '7-Day Sleep Wind-Down', detail: 'Power down screens 30 minutes before bed', members: 'Solo plan', type: 'personal' },
-] as const;
+];
 
 const COMMUNITY_DISCOVERY = [
   { name: 'Sleep Better Crew', city: 'Los Angeles, CA', members: '16,302 members' },
@@ -138,10 +237,115 @@ const toShareSlug = (value: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
+const toErrorText = (error: unknown): string => {
+  if (typeof error === 'string') {
+    return error;
+  }
+  if (error && typeof error === 'object' && 'message' in error) {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === 'string') {
+      return maybeMessage;
+    }
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
+
 type InviteContact = {
   id: string;
   name: string;
   phone: string | null;
+};
+
+const moduleHealthKit = (AppleHealthKitModule as unknown as { default?: unknown; HealthKit?: unknown }).default
+  ?? (AppleHealthKitModule as unknown as { HealthKit?: unknown }).HealthKit
+  ?? AppleHealthKitModule;
+const nativeHealthKit = (NativeModules as { AppleHealthKit?: unknown }).AppleHealthKit;
+const rawHealthKit = (nativeHealthKit ?? moduleHealthKit) as Record<string, unknown>;
+const moduleConstants = (moduleHealthKit as { Constants?: unknown })?.Constants;
+if (!rawHealthKit.Constants && moduleConstants) {
+  rawHealthKit.Constants = moduleConstants;
+}
+
+const healthKit = rawHealthKit as {
+  Constants?: {
+    Permissions?: Record<string, string>;
+    Units?: Record<string, string>;
+  };
+  initHealthKit?: (config: unknown, callback: (error?: string) => void) => void;
+  getLatestHeartRate?: (options: unknown, callback: (error?: string, result?: { value?: number }) => void) => void;
+  getHeartRateSamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getRestingHeartRateSamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getHeartRateVariabilitySamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getRespiratoryRateSamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getOxygenSaturationSamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getStepCount?: (options: unknown, callback: (error?: string, result?: { value?: number }) => void) => void;
+  getDailyDistanceWalkingRunningSamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getDailyFlightsClimbedSamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getSleepSamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: string; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getActiveEnergyBurned?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getBasalEnergyBurned?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getAppleExerciseTime?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getAppleStandTime?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getBodyTemperatureSamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getWeightSamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getVo2MaxSamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getBloodGlucoseSamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getMindfulSession?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ startDate?: string; endDate?: string }>) => void,
+  ) => void;
 };
 
 const COMMUNITY_UPCOMING_EVENTS = [
@@ -203,9 +407,25 @@ export default function App() {
   const [mapLocationStatus, setMapLocationStatus] = useState<'idle' | 'granted' | 'denied'>('idle');
   const [mapCoords, setMapCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [activeMapLayer, setActiveMapLayer] = useState<MapLayer>('Indoor');
-  const [activeInsightTab, setActiveInsightTab] = useState<InsightTab>('Log Glucose');
+  const [activeInsightTab, setActiveInsightTab] = useState<InsightTab | null>(null);
+  const [dashboardQuickMetrics, setDashboardQuickMetrics] = useState<InsightTab[]>(() =>
+    QUICK_ACTION_METRIC_OPTIONS.slice(0, DASHBOARD_QUICK_ACTION_SLOTS),
+  );
+  const [quickMetricSearchQuery, setQuickMetricSearchQuery] = useState('');
+  const [expandedInsightGroups, setExpandedInsightGroups] = useState<Record<string, boolean>>(
+    () => INSIGHT_GROUPS.reduce((acc, group) => ({ ...acc, [group.id]: true }), {}),
+  );
+  const [insightContentByTab, setInsightContentByTab] = useState<Record<InsightTab, InsightContent>>(INSIGHTS_TAB_CONTENT);
+  const [healthKitStatus, setHealthKitStatus] = useState<'idle' | 'ready' | 'denied' | 'unsupported'>('idle');
+  const [healthKitLoading, setHealthKitLoading] = useState(false);
+  const [healthKitLastError, setHealthKitLastError] = useState<string | null>(null);
   const [goalsTab, setGoalsTab] = useState<GoalsTab>('Communities');
   const [challengeFilter, setChallengeFilter] = useState<ChallengeFilter>('All');
+  const [communitySearchQuery, setCommunitySearchQuery] = useState('');
+  const [personalChallenges, setPersonalChallenges] = useState<GoalChallenge[]>([]);
+  const [showCreatePersonalChallengeModal, setShowCreatePersonalChallengeModal] = useState(false);
+  const [newChallengeTitle, setNewChallengeTitle] = useState('');
+  const [newChallengeDetail, setNewChallengeDetail] = useState('');
   const [joinedCommunityNames, setJoinedCommunityNames] = useState<string[]>([]);
   const [selectedJoinedCommunityName, setSelectedJoinedCommunityName] = useState<string | null>(null);
   const [selectedCommunityAction, setSelectedCommunityAction] = useState('Progress Board');
@@ -215,6 +435,7 @@ export default function App() {
   const [showInvitePopup, setShowInvitePopup] = useState(false);
   const [inviteContacts, setInviteContacts] = useState<InviteContact[]>([]);
   const [loadingInviteContacts, setLoadingInviteContacts] = useState(false);
+  const [startupPermissionsRequested, setStartupPermissionsRequested] = useState(false);
   const [weatherF, setWeatherF] = useState(72);
   const [weatherLabel, setWeatherLabel] = useState('Sunny');
   const [foodSuggestionCollapsed, setFoodSuggestionCollapsed] = useState(false);
@@ -294,16 +515,46 @@ export default function App() {
   const selectedJoinedCommunity = selectedJoinedCommunityName
     ? joinedCommunities.find((community) => community.name === selectedJoinedCommunityName) ?? null
     : null;
-  const filteredChallenges = GOALS_CHALLENGES.filter((challenge) => {
+  const filteredCommunities = COMMUNITY_DISCOVERY.filter((community) => {
+    const query = communitySearchQuery.trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+    return (
+      community.name.toLowerCase().includes(query) ||
+      community.city.toLowerCase().includes(query) ||
+      community.members.toLowerCase().includes(query)
+    );
+  });
+  const allChallenges = [...personalChallenges, ...GOALS_CHALLENGES];
+  const filteredChallenges = allChallenges.filter((challenge) => {
     if (challengeFilter === 'All') {
       return true;
     }
     return challengeFilter === 'Personal' ? challenge.type === 'personal' : challenge.type === 'community';
   });
-  const selectedInsightContent = INSIGHTS_TAB_CONTENT[activeInsightTab];
+  const selectedInsightContent = activeInsightTab ? insightContentByTab[activeInsightTab] : null;
   const selectedCommunityShareLink = selectedJoinedCommunity
     ? `https://connectedwellness.app/community/${toShareSlug(selectedJoinedCommunity.name)}?invite=demo2026`
     : null;
+  const filteredQuickMetricOptions = QUICK_ACTION_METRIC_OPTIONS.filter((metric) => {
+    const query = quickMetricSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return dashboardQuickMetrics.includes(metric);
+    }
+    return metric.toLowerCase().includes(query);
+  });
+  const toggleDashboardQuickMetric = (metric: InsightTab) => {
+    setDashboardQuickMetrics((prev) => {
+      if (prev.includes(metric)) {
+        return prev.filter((m) => m !== metric);
+      }
+      if (prev.length < DASHBOARD_QUICK_ACTION_SLOTS) {
+        return [...prev, metric];
+      }
+      return [...prev.slice(1), metric];
+    });
+  };
 
   const openInviteContacts = async () => {
     if (!selectedCommunityShareLink || !selectedJoinedCommunity) {
@@ -330,6 +581,20 @@ export default function App() {
     setShowInvitePopup(true);
   };
 
+  const createPersonalChallenge = () => {
+    const title = newChallengeTitle.trim();
+    const detail = newChallengeDetail.trim();
+    if (!title || !detail) {
+      Alert.alert('Missing details', 'Please add a title and details for your personal challenge.');
+      return;
+    }
+    setPersonalChallenges((prev) => [{ title, detail, members: 'Personal', type: 'personal' }, ...prev]);
+    setChallengeFilter('Personal');
+    setNewChallengeTitle('');
+    setNewChallengeDetail('');
+    setShowCreatePersonalChallengeModal(false);
+  };
+
   const inviteContactBySms = async (contact: InviteContact) => {
     if (!selectedCommunityShareLink || !selectedJoinedCommunity) {
       return;
@@ -350,6 +615,667 @@ export default function App() {
     }
     await Linking.openURL(smsUrl);
   };
+
+  const initHealthKitAsync = async () => {
+    if (healthKitLoading) {
+      return;
+    }
+    setHealthKitLoading(true);
+    setHealthKitLastError(null);
+    try {
+      if (Platform.OS !== 'ios') {
+        setHealthKitStatus('unsupported');
+        setHealthKitLastError('HealthKit is only available on iOS devices.');
+        return;
+      }
+      if (!healthKit.initHealthKit || !healthKit.Constants?.Permissions) {
+        setHealthKitStatus('unsupported');
+        setHealthKitLastError('Native HealthKit module unavailable in current build.');
+        return;
+      }
+
+      const readPermissions = healthKit.Constants.Permissions;
+      const permissions = {
+        permissions: {
+          read: [
+            readPermissions.HeartRate,
+            readPermissions.RestingHeartRate,
+            readPermissions.HeartRateVariability,
+            readPermissions.RespiratoryRate,
+            readPermissions.OxygenSaturation,
+            readPermissions.StepCount,
+            readPermissions.DistanceWalkingRunning,
+            readPermissions.FlightsClimbed,
+            readPermissions.SleepAnalysis,
+            readPermissions.ActiveEnergyBurned,
+            readPermissions.BasalEnergyBurned,
+            readPermissions.AppleExerciseTime,
+            readPermissions.AppleStandTime,
+            readPermissions.MindfulSession,
+            readPermissions.BodyTemperature,
+            readPermissions.Weight,
+            readPermissions.Vo2Max,
+            readPermissions.BloodGlucose,
+          ].filter(Boolean),
+          write: [],
+        },
+      };
+
+      let initErrorMessage: unknown = null;
+      const initialized = await new Promise<boolean>((resolve) => {
+        healthKit.initHealthKit?.(permissions, (error?: unknown) => {
+          initErrorMessage = error ?? null;
+          resolve(!error);
+        });
+      });
+
+      if (!initialized) {
+        const readableError = toErrorText(initErrorMessage ?? 'HealthKit authorization failed.');
+        setHealthKitStatus('denied');
+        setHealthKitLastError(readableError);
+        Alert.alert('Apple Health connection failed', readableError);
+        return;
+      }
+
+      const now = new Date();
+      const dayStart = new Date(now);
+      dayStart.setHours(0, 0, 0, 0);
+      const weekStart = new Date(now);
+      weekStart.setDate(now.getDate() - 7);
+      const yesterdayStart = new Date(dayStart);
+      yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+      const fourteenDaysStart = new Date(dayStart);
+      fourteenDaysStart.setDate(fourteenDaysStart.getDate() - 14);
+
+      const formatTrend = (current: number, previous: number, suffix: string) => {
+        if (current <= 0 && previous <= 0) {
+          return 'Trend: collecting baseline data';
+        }
+        if (previous <= 0) {
+          return `Trend: +${current.toFixed(1)}${suffix} vs baseline`;
+        }
+        const deltaPct = ((current - previous) / previous) * 100;
+        const sign = deltaPct >= 0 ? '+' : '';
+        return `Trend: ${sign}${deltaPct.toFixed(1)}% vs previous period`;
+      };
+      const dayLabel = (value: Date) => value.toLocaleDateString('en-US', { weekday: 'short' }).charAt(0);
+      const getLastNDays = (n: number) =>
+        Array.from({ length: n }, (_, index) => {
+          const d = new Date(dayStart);
+          d.setDate(dayStart.getDate() - (n - 1 - index));
+          return d;
+        });
+      const sevenDayDates = getLastNDays(7);
+      const sevenDayLabels = sevenDayDates.map(dayLabel);
+      const toDayKey = (value: Date) => value.toISOString().slice(0, 10);
+      const zeroSeries = () => [0, 0, 0, 0, 0, 0, 0];
+      const latest = (series: number[]) => series[series.length - 1] ?? 0;
+      const previous = (series: number[]) => series[series.length - 2] ?? 0;
+      const loadSeriesFromSamples = async (
+        getter: ((options: unknown, callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void) => void) | undefined,
+        options: Record<string, unknown>,
+        mode: 'sum' | 'avg' = 'sum',
+        valueMapper?: (value: number) => number,
+      ) => {
+        if (!getter) {
+          return zeroSeries();
+        }
+        return new Promise<number[]>((resolve) => {
+          getter(options, (_error, result) => {
+            const samples = result ?? [];
+            const byDay = new Map<string, { sum: number; count: number }>();
+            samples.forEach((sample) => {
+              const raw = sample.value ?? 0;
+              const mapped = valueMapper ? valueMapper(raw) : raw;
+              if (!Number.isFinite(mapped)) {
+                return;
+              }
+              const ts = sample.startDate
+                ? new Date(sample.startDate).getTime()
+                : sample.endDate
+                  ? new Date(sample.endDate).getTime()
+                  : 0;
+              if (!ts || ts < sevenDayDates[0].getTime()) {
+                return;
+              }
+              const key = toDayKey(new Date(ts));
+              const prevVal = byDay.get(key) ?? { sum: 0, count: 0 };
+              prevVal.sum += mapped;
+              prevVal.count += 1;
+              byDay.set(key, prevVal);
+            });
+            const series = sevenDayDates.map((d) => {
+              const day = byDay.get(toDayKey(d));
+              if (!day || day.count === 0) {
+                return 0;
+              }
+              const value = mode === 'avg' ? day.sum / day.count : day.sum;
+              return Number(value.toFixed(1));
+            });
+            resolve(series);
+          });
+        });
+      };
+
+      let heartRateValue = 0;
+      let heartRatePrevious = 0;
+      let stepCountValue = 0;
+      let stepCountPrevious = 0;
+      let sleepHours = 0;
+      let sleepHoursPrevious = 0;
+      let activeEnergyKcal = 0;
+      let activeEnergyPrevious = 0;
+      let mindfulSessions = 0;
+      let mindfulSessionsPrevious = 0;
+      let heartRateTrendPoints = new Array(7).fill(0);
+      let stepTrendPoints = new Array(7).fill(0);
+      let sleepTrendPoints = new Array(7).fill(0);
+      let activeEnergyTrendPoints = new Array(7).fill(0);
+      let mindfulnessTrendPoints = new Array(7).fill(0);
+      let restingHeartRateTrendPoints = zeroSeries();
+      let hrvTrendPoints = zeroSeries();
+      let respiratoryTrendPoints = zeroSeries();
+      let bloodOxygenTrendPoints = zeroSeries();
+      let distanceTrendPoints = zeroSeries();
+      let flightsTrendPoints = zeroSeries();
+      let basalEnergyTrendPoints = zeroSeries();
+      let exerciseTimeTrendPoints = zeroSeries();
+      let standTimeTrendPoints = zeroSeries();
+      let bodyTemperatureTrendPoints = zeroSeries();
+      let weightTrendPoints = zeroSeries();
+      let vo2MaxTrendPoints = zeroSeries();
+      let bloodGlucoseTrendPoints = zeroSeries();
+
+      if (healthKit.getLatestHeartRate) {
+        await new Promise<void>((resolve) => {
+          healthKit.getLatestHeartRate?.({}, (_error, result) => {
+            heartRateValue = Math.round(result?.value ?? 0);
+            resolve();
+          });
+        });
+      }
+      if (healthKit.getHeartRateSamples) {
+        await new Promise<void>((resolve) => {
+          healthKit.getHeartRateSamples?.(
+            {
+              startDate: fourteenDaysStart.toISOString(),
+              endDate: now.toISOString(),
+            },
+            (_error, result) => {
+              const samples = result ?? [];
+              const previousSamples = samples.filter((sample) => {
+                const ts = sample.startDate ? new Date(sample.startDate).getTime() : 0;
+                return ts >= yesterdayStart.getTime() && ts < dayStart.getTime();
+              });
+              const vals = previousSamples.map((s) => s.value ?? 0).filter((v) => v > 0);
+              if (vals.length > 0) {
+                heartRatePrevious = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+              }
+              const byDay = new Map<string, number[]>();
+              samples.forEach((sample) => {
+                const ts = sample.startDate ? new Date(sample.startDate).getTime() : 0;
+                if (!ts || ts < sevenDayDates[0].getTime()) {
+                  return;
+                }
+                const key = toDayKey(new Date(ts));
+                const prev = byDay.get(key) ?? [];
+                if ((sample.value ?? 0) > 0) {
+                  prev.push(sample.value ?? 0);
+                  byDay.set(key, prev);
+                }
+              });
+              heartRateTrendPoints = sevenDayDates.map((d) => {
+                const valsForDay = byDay.get(toDayKey(d)) ?? [];
+                if (valsForDay.length === 0) {
+                  return 0;
+                }
+                const avg = valsForDay.reduce((a, b) => a + b, 0) / valsForDay.length;
+                return Math.round(avg);
+              });
+              resolve();
+            },
+          );
+        });
+      }
+      if (healthKit.getStepCount) {
+        const stepResults: number[] = [];
+        for (const date of sevenDayDates) {
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise<void>((resolve) => {
+            const rangeStart = new Date(date);
+            const rangeEnd = new Date(date);
+            rangeEnd.setDate(rangeEnd.getDate() + 1);
+            const isToday = toDayKey(date) === toDayKey(dayStart);
+            healthKit.getStepCount?.(
+              {
+                date: date.toISOString(),
+                startDate: rangeStart.toISOString(),
+                endDate: isToday ? now.toISOString() : rangeEnd.toISOString(),
+              },
+              (_error, result) => {
+                stepResults.push(Math.round(result?.value ?? 0));
+                resolve();
+              },
+            );
+          });
+        }
+        stepTrendPoints = stepResults;
+        stepCountValue = stepResults[stepResults.length - 1] ?? 0;
+        stepCountPrevious = stepResults[stepResults.length - 2] ?? 0;
+      }
+      if (healthKit.getSleepSamples) {
+        await new Promise<void>((resolve) => {
+          healthKit.getSleepSamples?.(
+            {
+              startDate: fourteenDaysStart.toISOString(),
+              endDate: now.toISOString(),
+            },
+            (_error, result) => {
+              const samples = result ?? [];
+              const sleepByDay = new Map<string, number>();
+              samples.forEach((sample) => {
+                const value = sample.value?.toLowerCase() ?? '';
+                if (!value.includes('asleep')) {
+                  return;
+                }
+                const start = sample.startDate ? new Date(sample.startDate).getTime() : 0;
+                const end = sample.endDate ? new Date(sample.endDate).getTime() : 0;
+                if (!start || !end || end <= start) {
+                  return;
+                }
+                const key = toDayKey(new Date(end));
+                const prev = sleepByDay.get(key) ?? 0;
+                sleepByDay.set(key, prev + (end - start) / (1000 * 60));
+              });
+              sleepTrendPoints = sevenDayDates.map((d) => Number(((sleepByDay.get(toDayKey(d)) ?? 0) / 60).toFixed(1)));
+
+              const midpoint = new Date(dayStart);
+              midpoint.setDate(midpoint.getDate() - 7);
+              const currentMinutes = samples.reduce((acc, sample) => {
+                const value = sample.value?.toLowerCase() ?? '';
+                if (!value.includes('asleep')) {
+                  return acc;
+                }
+                const start = sample.startDate ? new Date(sample.startDate).getTime() : 0;
+                const end = sample.endDate ? new Date(sample.endDate).getTime() : 0;
+                if (!start || !end || end <= start || end < midpoint.getTime()) {
+                  return acc;
+                }
+                return acc + (end - start) / (1000 * 60);
+              }, 0);
+              const totalMinutes = samples.reduce((acc, sample) => {
+                const value = sample.value?.toLowerCase() ?? '';
+                if (!value.includes('asleep')) {
+                  return acc;
+                }
+                const start = sample.startDate ? new Date(sample.startDate).getTime() : 0;
+                const end = sample.endDate ? new Date(sample.endDate).getTime() : 0;
+                if (!start || !end || end <= start) {
+                  return acc;
+                }
+                return acc + (end - start) / (1000 * 60);
+              }, 0);
+              const previousMinutes = totalMinutes - currentMinutes;
+
+              sleepHours = Number((currentMinutes / 60 / 7).toFixed(1));
+              sleepHoursPrevious = Number((previousMinutes / 60 / 7).toFixed(1));
+              resolve();
+            },
+          );
+        });
+      }
+      if (healthKit.getActiveEnergyBurned) {
+        await new Promise<void>((resolve) => {
+          healthKit.getActiveEnergyBurned?.(
+            {
+              unit: healthKit.Constants?.Units?.kcal ?? 'kcal',
+              startDate: yesterdayStart.toISOString(),
+              endDate: now.toISOString(),
+            },
+            (_error, result) => {
+              const samples = result ?? [];
+              const byDay = new Map<string, number>();
+              samples.forEach((sample) => {
+                const dt = sample.startDate ? new Date(sample.startDate).getTime() : 0;
+                if (!dt) {
+                  return;
+                }
+                const key = toDayKey(new Date(dt));
+                byDay.set(key, (byDay.get(key) ?? 0) + (sample.value ?? 0));
+              });
+              activeEnergyTrendPoints = sevenDayDates.map((d) => Math.round(byDay.get(toDayKey(d)) ?? 0));
+              const split = dayStart.getTime();
+              activeEnergyKcal = Math.round(
+                samples
+                  .filter((sample) => {
+                    const dt = sample.startDate ? new Date(sample.startDate).getTime() : split;
+                    return dt >= split;
+                  })
+                  .reduce((acc, sample) => acc + (sample.value ?? 0), 0),
+              );
+              activeEnergyPrevious = Math.round(
+                samples
+                  .filter((sample) => {
+                    const dt = sample.startDate ? new Date(sample.startDate).getTime() : split - 1;
+                    return dt < split;
+                  })
+                  .reduce((acc, sample) => acc + (sample.value ?? 0), 0),
+              );
+              resolve();
+            },
+          );
+        });
+      }
+      if (healthKit.getMindfulSession) {
+        await new Promise<void>((resolve) => {
+          healthKit.getMindfulSession?.(
+            {
+              startDate: fourteenDaysStart.toISOString(),
+              endDate: now.toISOString(),
+            },
+            (_error, result) => {
+              const sessions = result ?? [];
+              const byDay = new Map<string, number>();
+              sessions.forEach((sample) => {
+                const ts = sample.startDate ? new Date(sample.startDate).getTime() : 0;
+                if (!ts) {
+                  return;
+                }
+                const key = toDayKey(new Date(ts));
+                byDay.set(key, (byDay.get(key) ?? 0) + 1);
+              });
+              mindfulnessTrendPoints = sevenDayDates.map((d) => byDay.get(toDayKey(d)) ?? 0);
+              mindfulSessions = sessions.filter((sample) => {
+                const start = sample.startDate ? new Date(sample.startDate).getTime() : 0;
+                return start >= weekStart.getTime();
+              }).length;
+              mindfulSessionsPrevious = sessions.length - mindfulSessions;
+              resolve();
+            },
+          );
+        });
+      }
+
+      const baseRange = {
+        startDate: sevenDayDates[0].toISOString(),
+        endDate: now.toISOString(),
+      };
+
+      restingHeartRateTrendPoints = await loadSeriesFromSamples(healthKit.getRestingHeartRateSamples, baseRange, 'avg');
+      hrvTrendPoints = await loadSeriesFromSamples(healthKit.getHeartRateVariabilitySamples, baseRange, 'avg');
+      respiratoryTrendPoints = await loadSeriesFromSamples(healthKit.getRespiratoryRateSamples, baseRange, 'avg');
+      bloodOxygenTrendPoints = await loadSeriesFromSamples(
+        healthKit.getOxygenSaturationSamples,
+        baseRange,
+        'avg',
+        (v) => (v <= 1 ? v * 100 : v),
+      );
+      distanceTrendPoints = await loadSeriesFromSamples(
+        healthKit.getDailyDistanceWalkingRunningSamples,
+        {
+          ...baseRange,
+          unit: healthKit.Constants?.Units?.mile ?? 'mile',
+        },
+        'sum',
+      );
+      flightsTrendPoints = await loadSeriesFromSamples(healthKit.getDailyFlightsClimbedSamples, baseRange, 'sum');
+      basalEnergyTrendPoints = await loadSeriesFromSamples(
+        healthKit.getBasalEnergyBurned,
+        {
+          ...baseRange,
+          unit: healthKit.Constants?.Units?.kcal ?? 'kcal',
+        },
+        'sum',
+      );
+      exerciseTimeTrendPoints = await loadSeriesFromSamples(
+        healthKit.getAppleExerciseTime,
+        {
+          ...baseRange,
+          unit: healthKit.Constants?.Units?.minute ?? 'minute',
+        },
+        'sum',
+      );
+      standTimeTrendPoints = await loadSeriesFromSamples(
+        healthKit.getAppleStandTime,
+        {
+          ...baseRange,
+          unit: healthKit.Constants?.Units?.minute ?? 'minute',
+        },
+        'sum',
+      );
+      bodyTemperatureTrendPoints = await loadSeriesFromSamples(
+        healthKit.getBodyTemperatureSamples,
+        {
+          ...baseRange,
+          unit: healthKit.Constants?.Units?.fahrenheit ?? 'fahrenheit',
+        },
+        'avg',
+      );
+      weightTrendPoints = await loadSeriesFromSamples(
+        healthKit.getWeightSamples,
+        {
+          ...baseRange,
+          unit: healthKit.Constants?.Units?.pound ?? 'pound',
+        },
+        'avg',
+      );
+      vo2MaxTrendPoints = await loadSeriesFromSamples(healthKit.getVo2MaxSamples, baseRange, 'avg');
+      bloodGlucoseTrendPoints = await loadSeriesFromSamples(
+        healthKit.getBloodGlucoseSamples,
+        {
+          ...baseRange,
+          unit: healthKit.Constants?.Units?.mgPerdL ?? 'mgPerdL',
+        },
+        'avg',
+      );
+
+      setInsightContentByTab({
+        'Heart Rate': {
+          title: 'Latest Heart Rate',
+          summary: heartRateValue > 0 ? `${heartRateValue} bpm (latest sample from Apple Health)` : 'No recent heart rate sample found.',
+          trend: formatTrend(heartRateValue, heartRatePrevious, ' bpm'),
+          recommendation: 'Track heart rate daily for stronger baseline trends.',
+          trendPoints: heartRateTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'bpm',
+        },
+        'Resting Heart Rate': {
+          title: 'Resting Heart Rate',
+          summary: latest(restingHeartRateTrendPoints) > 0
+            ? `${latest(restingHeartRateTrendPoints)} bpm most recent day`
+            : 'No resting heart-rate samples found.',
+          trend: formatTrend(latest(restingHeartRateTrendPoints), previous(restingHeartRateTrendPoints), ' bpm'),
+          recommendation: 'A lower, stable resting heart rate often reflects good recovery.',
+          trendPoints: restingHeartRateTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'bpm',
+        },
+        'Heart Rate Variability': {
+          title: 'Heart Rate Variability',
+          summary: latest(hrvTrendPoints) > 0 ? `${latest(hrvTrendPoints)} ms recent average` : 'No HRV samples found.',
+          trend: formatTrend(latest(hrvTrendPoints), previous(hrvTrendPoints), ' ms'),
+          recommendation: 'Consistent sleep and stress management can improve HRV over time.',
+          trendPoints: hrvTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'ms',
+        },
+        'Respiratory Rate': {
+          title: 'Respiratory Rate',
+          summary: latest(respiratoryTrendPoints) > 0
+            ? `${latest(respiratoryTrendPoints)} breaths/min recent average`
+            : 'No respiratory-rate samples found.',
+          trend: formatTrend(latest(respiratoryTrendPoints), previous(respiratoryTrendPoints), ' br/min'),
+          recommendation: 'Watch for sustained shifts and pair with recovery signals.',
+          trendPoints: respiratoryTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'br/min',
+        },
+        'Blood Oxygen': {
+          title: 'Blood Oxygen',
+          summary: latest(bloodOxygenTrendPoints) > 0 ? `${latest(bloodOxygenTrendPoints)}% recent average` : 'No blood-oxygen samples found.',
+          trend: formatTrend(latest(bloodOxygenTrendPoints), previous(bloodOxygenTrendPoints), '%'),
+          recommendation: 'Regular sleep and cardio activity can support oxygen efficiency.',
+          trendPoints: bloodOxygenTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: '%',
+        },
+        Steps: {
+          title: 'Today Steps',
+          summary: `${stepCountValue.toLocaleString()} steps today from Apple Health`,
+          trend: formatTrend(stepCountValue, stepCountPrevious, ' steps'),
+          recommendation: 'Aim for short walking breaks to increase daily steps.',
+          trendPoints: stepTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'steps',
+        },
+        'Walking + Running Distance': {
+          title: 'Walking + Running Distance',
+          summary: `${latest(distanceTrendPoints).toFixed(2)} mi today`,
+          trend: formatTrend(latest(distanceTrendPoints), previous(distanceTrendPoints), ' mi'),
+          recommendation: 'Steady distance growth usually follows small daily consistency.',
+          trendPoints: distanceTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'mi',
+        },
+        'Flights Climbed': {
+          title: 'Flights Climbed',
+          summary: `${latest(flightsTrendPoints).toFixed(0)} floors climbed today`,
+          trend: formatTrend(latest(flightsTrendPoints), previous(flightsTrendPoints), ' floors'),
+          recommendation: 'Short stair sessions are an easy way to increase intensity.',
+          trendPoints: flightsTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'floors',
+        },
+        Sleep: {
+          title: 'Sleep Duration',
+          summary: sleepHours > 0 ? `${sleepHours} avg hours/night over last 7 days` : 'No sleep samples found for the selected period.',
+          trend: formatTrend(sleepHours, sleepHoursPrevious, 'h'),
+          recommendation: 'Maintain consistent wind-down to improve sleep duration.',
+          trendPoints: sleepTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'h',
+        },
+        'Active Energy': {
+          title: 'Active Energy',
+          summary: `${activeEnergyKcal} kcal burned today`,
+          trend: formatTrend(activeEnergyKcal, activeEnergyPrevious, ' kcal'),
+          recommendation: 'Add brief activity intervals to increase active energy burn.',
+          trendPoints: activeEnergyTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'kcal',
+        },
+        'Basal Energy': {
+          title: 'Basal Energy',
+          summary: `${latest(basalEnergyTrendPoints).toFixed(0)} kcal most recent day`,
+          trend: formatTrend(latest(basalEnergyTrendPoints), previous(basalEnergyTrendPoints), ' kcal'),
+          recommendation: 'Basal energy reflects foundational metabolism and body needs.',
+          trendPoints: basalEnergyTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'kcal',
+        },
+        'Exercise Time': {
+          title: 'Exercise Time',
+          summary: `${latest(exerciseTimeTrendPoints).toFixed(0)} active minutes today`,
+          trend: formatTrend(latest(exerciseTimeTrendPoints), previous(exerciseTimeTrendPoints), ' min'),
+          recommendation: 'Short exercise blocks compound well over a week.',
+          trendPoints: exerciseTimeTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'min',
+        },
+        'Stand Time': {
+          title: 'Stand Time',
+          summary: `${latest(standTimeTrendPoints).toFixed(0)} stand minutes today`,
+          trend: formatTrend(latest(standTimeTrendPoints), previous(standTimeTrendPoints), ' min'),
+          recommendation: 'Break up sitting every hour to improve stand trends.',
+          trendPoints: standTimeTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'min',
+        },
+        Mindfulness: {
+          title: 'Mindful Sessions',
+          summary: `${mindfulSessions} mindful session${mindfulSessions === 1 ? '' : 's'} in last 7 days`,
+          trend: formatTrend(mindfulSessions, mindfulSessionsPrevious, ' sessions'),
+          recommendation: 'A short daily mindful session can support stress recovery.',
+          trendPoints: mindfulnessTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'sessions',
+        },
+        'Body Temperature': {
+          title: 'Body Temperature',
+          summary: latest(bodyTemperatureTrendPoints) > 0
+            ? `${latest(bodyTemperatureTrendPoints)} degF recent average`
+            : 'No body-temperature samples found.',
+          trend: formatTrend(latest(bodyTemperatureTrendPoints), previous(bodyTemperatureTrendPoints), ' degF'),
+          recommendation: 'Use trends, not single points, to interpret temperature changes.',
+          trendPoints: bodyTemperatureTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'degF',
+        },
+        Weight: {
+          title: 'Weight',
+          summary: latest(weightTrendPoints) > 0 ? `${latest(weightTrendPoints)} lb recent value` : 'No weight samples found.',
+          trend: formatTrend(latest(weightTrendPoints), previous(weightTrendPoints), ' lb'),
+          recommendation: 'Weekly averages are more meaningful than daily fluctuations.',
+          trendPoints: weightTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'lb',
+        },
+        'VO2 Max': {
+          title: 'VO2 Max',
+          summary: latest(vo2MaxTrendPoints) > 0 ? `${latest(vo2MaxTrendPoints)} mL/kg/min recent estimate` : 'No VO2 max samples found.',
+          trend: formatTrend(latest(vo2MaxTrendPoints), previous(vo2MaxTrendPoints), ' mL/kg/min'),
+          recommendation: 'Cardio consistency is key for meaningful VO2 max improvements.',
+          trendPoints: vo2MaxTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'mL/kg/min',
+        },
+        'Blood Glucose': {
+          title: 'Blood Glucose',
+          summary: latest(bloodGlucoseTrendPoints) > 0 ? `${latest(bloodGlucoseTrendPoints)} mg/dL recent average` : 'No blood-glucose samples found.',
+          trend: formatTrend(latest(bloodGlucoseTrendPoints), previous(bloodGlucoseTrendPoints), ' mg/dL'),
+          recommendation: 'Pair glucose trends with meals and activity for context.',
+          trendPoints: bloodGlucoseTrendPoints,
+          trendLabels: sevenDayLabels,
+          trendUnit: 'mg/dL',
+        },
+      });
+      setHealthKitStatus('ready');
+    } catch (error) {
+      const errorMessage = toErrorText(error);
+      setHealthKitStatus('denied');
+      setHealthKitLastError(errorMessage);
+      Alert.alert('Apple Health connection failed', errorMessage);
+    } finally {
+      setHealthKitLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (startupPermissionsRequested) {
+      return;
+    }
+    let cancelled = false;
+    async function requestStartupPermissions() {
+      setStartupPermissionsRequested(true);
+      try {
+        await Location.requestForegroundPermissionsAsync();
+      } catch {
+        // Ignore startup permission failures; user can retry in feature flows.
+      }
+      try {
+        await Contacts.requestPermissionsAsync();
+      } catch {
+        // Ignore startup permission failures; user can retry in feature flows.
+      }
+      if (!cancelled) {
+        void initHealthKitAsync();
+      }
+    }
+    void requestStartupPermissions();
+    return () => {
+      cancelled = true;
+    };
+  }, [startupPermissionsRequested]);
 
   useEffect(() => {
     if (!useDeviceLocation) {
@@ -482,6 +1408,13 @@ export default function App() {
   }, [goalsTab]);
 
   useEffect(() => {
+    if (activeTab !== 'Insights' || healthKitStatus === 'ready' || healthKitLoading) {
+      return;
+    }
+    void initHealthKitAsync();
+  }, [activeTab, healthKitStatus, healthKitLoading]);
+
+  useEffect(() => {
     if (selectedJoinedCommunityName == null) {
       setSelectedCommunityAction('Progress Board');
       setEventsTab('Upcoming');
@@ -553,27 +1486,191 @@ export default function App() {
         </View>
       ) : activeTab === 'Insights' ? (
         <View style={styles.insightsScreen}>
-          <Text style={styles.insightsTitle}>Insights</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.insightsTabScroll} contentContainerStyle={styles.insightsTabRow}>
-            {INSIGHTS_TABS.map((tab) => (
-              <TouchableOpacity
-                key={tab}
-                onPress={() => setActiveInsightTab(tab)}
-                style={[styles.insightsTab, activeInsightTab === tab && styles.insightsTabActive]}
+          {activeInsightTab == null ? (
+            <>
+              <Text style={styles.insightsTitle}>Insights</Text>
+              <Text style={styles.insightsStatusText}>
+                {Platform.OS !== 'ios'
+                  ? 'Apple Health is available on iOS only.'
+                  : healthKitLoading
+                    ? 'Connecting to Apple Health...'
+                  : healthKitStatus === 'ready'
+                    ? 'Connected to Apple Health.'
+                    : healthKitStatus === 'denied'
+                      ? 'Apple Health permission denied.'
+                      : healthKitStatus === 'unsupported'
+                        ? 'Apple Health unavailable in this build.'
+                        : 'Requesting Apple Health access...'}
+              </Text>
+              {Platform.OS === 'ios' && healthKitStatus !== 'ready' ? (
+                <TouchableOpacity
+                  disabled={healthKitLoading}
+                  onPress={() => {
+                    setHealthKitStatus('idle');
+                    void initHealthKitAsync();
+                  }}
+                  style={[styles.healthConnectBtn, healthKitLoading && styles.healthConnectBtnDisabled]}
+                >
+                  <Text style={styles.healthConnectBtnText}>{healthKitLoading ? 'Connecting...' : 'Connect Apple Health'}</Text>
+                </TouchableOpacity>
+              ) : null}
+              {healthKitLastError ? <Text style={styles.healthErrorText}>{healthKitLastError}</Text> : null}
+              <TextInput
+                onChangeText={setQuickMetricSearchQuery}
+                placeholder="Search and star metrics for Dashboard quick actions"
+                placeholderTextColor="#64748b"
+                style={styles.quickMetricSearchInput}
+                value={quickMetricSearchQuery}
+              />
+              <View style={styles.quickMetricSearchResults}>
+                {filteredQuickMetricOptions.slice(0, 6).map((metric) => {
+                  const isSelected = dashboardQuickMetrics.includes(metric);
+                  return (
+                    <TouchableOpacity
+                      key={`search-${metric}`}
+                      onPress={() => toggleDashboardQuickMetric(metric)}
+                      style={[styles.quickMetricOptionChip, isSelected && styles.quickMetricOptionChipActive]}
+                    >
+                      <Text style={[styles.quickMetricOptionText, isSelected && styles.quickMetricOptionTextActive]}>
+                        {isSelected ? '★' : '☆'} {metric}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <ScrollView
+                bounces={false}
+                overScrollMode="never"
+                showsVerticalScrollIndicator={false}
+                style={styles.insightsTabScroll}
               >
-                <Text style={[styles.insightsTabText, activeInsightTab === tab && styles.insightsTabTextActive]}>{tab}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-          <View style={styles.insightsCard}>
-            <Text style={styles.insightsCardTitle}>{selectedInsightContent.title}</Text>
-            <Text style={styles.insightsCardSummary}>{selectedInsightContent.summary}</Text>
-            <Text style={styles.insightsCardTrend}>{selectedInsightContent.trend}</Text>
-          </View>
-          <View style={styles.insightsCard}>
-            <Text style={styles.insightsCardSection}>Recommendation</Text>
-            <Text style={styles.insightsCardSummary}>{selectedInsightContent.recommendation}</Text>
-          </View>
+                <View style={styles.insightsTabStack}>
+                  {INSIGHT_GROUPS.map((group) => {
+                    const isExpanded = expandedInsightGroups[group.id] ?? true;
+                    return (
+                      <View key={group.id} style={styles.insightsGroupCard}>
+                        <View style={[styles.insightsGroupBand, { backgroundColor: group.color }]} />
+                        <TouchableOpacity
+                          onPress={() =>
+                            setExpandedInsightGroups((prev) => ({
+                              ...prev,
+                              [group.id]: !isExpanded,
+                            }))}
+                          style={styles.insightsGroupHeader}
+                        >
+                          <View style={styles.insightsGroupHeaderText}>
+                            <Text style={styles.insightsGroupTitle}>{group.title}</Text>
+                            <Text style={styles.insightsGroupSubtitle}>{group.subtitle}</Text>
+                          </View>
+                          <Text style={styles.insightsGroupChevron}>{isExpanded ? '−' : '+'}</Text>
+                        </TouchableOpacity>
+                        {isExpanded ? (
+                          <View style={styles.insightsGroupBody}>
+                            {group.tabs.map((tab) => (
+                              <View key={`${group.id}-${tab}`} style={styles.insightsTab}>
+                                <View style={[styles.insightsSubTabBand, { backgroundColor: group.color }]} />
+                                <TouchableOpacity onPress={() => setActiveInsightTab(tab)} style={styles.insightsTabMainPress}>
+                                  <Text style={styles.insightsTabText}>{tab}</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={() => toggleDashboardQuickMetric(tab)}
+                                  style={[
+                                    styles.insightsTabStarBtn,
+                                    dashboardQuickMetrics.includes(tab) && styles.insightsTabStarBtnActive,
+                                  ]}
+                                >
+                                  <Text style={styles.insightsTabStarText}>{dashboardQuickMetrics.includes(tab) ? '★' : '☆'}</Text>
+                                </TouchableOpacity>
+                              </View>
+                            ))}
+                          </View>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            </>
+          ) : (
+            <View style={styles.insightsDetailScreen}>
+              <View style={styles.insightsDetailHeader}>
+                <TouchableOpacity onPress={() => setActiveInsightTab(null)} style={styles.insightsBackBtn}>
+                  <Text style={styles.insightsBackText}>{'<'}</Text>
+                </TouchableOpacity>
+                <View style={styles.insightsDetailHeaderText}>
+                  <Text style={styles.insightsTitle}>{activeInsightTab}</Text>
+                  <Text style={styles.insightsDetailSubtitle}>Dedicated insight screen</Text>
+                </View>
+              </View>
+              {selectedInsightContent ? (
+                <>
+                  <View style={styles.insightsCard}>
+                    <Text style={styles.insightsCardTitle}>{selectedInsightContent.title}</Text>
+                    <Text style={styles.insightsCardSummary}>{selectedInsightContent.summary}</Text>
+                    <Text style={styles.insightsCardTrend}>{selectedInsightContent.trend}</Text>
+                  </View>
+                  <View style={styles.insightsCard}>
+                    <View style={styles.insightsChartHeader}>
+                      <Text style={styles.insightsCardSection}>7-Day Trend</Text>
+                      <Text style={styles.insightsChartUnit}>Unit: {selectedInsightContent.trendUnit}</Text>
+                    </View>
+                    <View style={styles.insightsLineChartWrap}>
+                      {(() => {
+                        const points = selectedInsightContent.trendPoints ?? [0, 0, 0, 0, 0, 0, 0];
+                        const labels = selectedInsightContent.trendLabels ?? ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+                        const chartWidth = 320;
+                        const chartHeight = 120;
+                        const graphPaddingX = 16;
+                        const graphPaddingY = 14;
+                        const max = Math.max(...points, 1);
+                        const usableWidth = chartWidth - graphPaddingX * 2;
+                        const usableHeight = chartHeight - graphPaddingY * 2;
+                        const stepX = points.length > 1 ? usableWidth / (points.length - 1) : usableWidth;
+                        const coords = points.map((value, idx) => {
+                          const x = graphPaddingX + idx * stepX;
+                          const y = graphPaddingY + (1 - value / max) * usableHeight;
+                          return { x, y, value };
+                        });
+                        const pathD = coords.map((pt, idx) => `${idx === 0 ? 'M' : 'L'} ${pt.x} ${pt.y}`).join(' ');
+
+                        return (
+                          <>
+                            <Svg height={chartHeight} viewBox={`0 0 ${chartWidth} ${chartHeight}`} width="100%">
+                              <Path d={`M ${graphPaddingX} ${chartHeight - graphPaddingY} L ${chartWidth - graphPaddingX} ${chartHeight - graphPaddingY}`} stroke="rgba(148,163,184,0.25)" strokeWidth={1.2} />
+                              <Path d={pathD} fill="none" stroke="#38bdf8" strokeWidth={2.6} />
+                              {coords.map((pt, idx) => (
+                                <Circle
+                                  key={`${selectedInsightContent.title}-dot-${idx}`}
+                                  cx={pt.x}
+                                  cy={pt.y}
+                                  fill="#0f172a"
+                                  r={3.8}
+                                  stroke="#38bdf8"
+                                  strokeWidth={2}
+                                />
+                              ))}
+                            </Svg>
+                            <View style={styles.insightsLineLabelsRow}>
+                              {labels.map((label, idx) => (
+                                <View key={`${selectedInsightContent.title}-label-${idx}`} style={styles.insightsLineLabelItem}>
+                                  <Text style={styles.insightsChartValue}>{points[idx] > 0 ? points[idx].toFixed(1).replace('.0', '') : '0'}</Text>
+                                  <Text style={styles.insightsChartLabel}>{label}</Text>
+                                </View>
+                              ))}
+                            </View>
+                          </>
+                        );
+                      })()}
+                    </View>
+                  </View>
+                  <View style={styles.insightsCard}>
+                    <Text style={styles.insightsCardSection}>Recommendation</Text>
+                    <Text style={styles.insightsCardSummary}>{selectedInsightContent.recommendation}</Text>
+                  </View>
+                </>
+              ) : null}
+            </View>
+          )}
         </View>
       ) : activeTab === 'Goals' ? (
         <View style={styles.goalsScreen}>
@@ -802,9 +1899,14 @@ export default function App() {
                   </TouchableOpacity>
                 ))}
               </View>
-              {filteredChallenges.map((c) => (
+              {challengeFilter === 'Personal' ? (
+                <TouchableOpacity onPress={() => setShowCreatePersonalChallengeModal(true)} style={styles.createPersonalChallengeBtn}>
+                  <Text style={styles.createPersonalChallengeBtnText}>+ Create Personal Challenge</Text>
+                </TouchableOpacity>
+              ) : null}
+              {filteredChallenges.map((c, index) => (
                 <View
-                  key={c.title}
+                  key={`${c.type}-${c.title}-${index}`}
                   style={[styles.goalsCard, c.type === 'community' ? styles.challengeCommunityCard : styles.challengePersonalCard]}
                 >
                   <View style={styles.challengeHeaderRow}>
@@ -822,11 +1924,17 @@ export default function App() {
           {goalsTab === 'Communities' ? (
             <ScrollView bounces={false} overScrollMode="never" showsVerticalScrollIndicator={false} style={styles.goalsScroll}>
               <View style={styles.communitySearchBar}>
-                <Text style={styles.communitySearchText}>Search communities, city, or focus area</Text>
+                <TextInput
+                  onChangeText={setCommunitySearchQuery}
+                  placeholder="Search communities, city, or focus area"
+                  placeholderTextColor="#6b7280"
+                  style={styles.communitySearchText}
+                  value={communitySearchQuery}
+                />
               </View>
               <Text style={styles.communitySectionTitle}>Popular communities near you</Text>
               <View style={styles.communityGrid}>
-                {COMMUNITY_DISCOVERY.map((community) => (
+                {filteredCommunities.map((community) => (
                   <View key={community.name} style={styles.communityCard}>
                     <Text style={styles.communityCardBadge}>●</Text>
                     <Text style={styles.communityCardTitle}>{community.name}</Text>
@@ -846,6 +1954,12 @@ export default function App() {
                     </TouchableOpacity>
                   </View>
                 ))}
+                {filteredCommunities.length === 0 ? (
+                  <View style={styles.goalsCard}>
+                    <Text style={styles.goalsCardTitle}>No communities found</Text>
+                    <Text style={styles.goalsCardDetail}>Try a different name or city in search.</Text>
+                  </View>
+                ) : null}
               </View>
             </ScrollView>
           ) : null}
@@ -1081,13 +2195,13 @@ export default function App() {
 
         <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
         <View style={styles.quickRow}>
-          {QUICK_ACTIONS.map((action) => (
-            <View key={action.label} style={styles.quickItem}>
+          {dashboardQuickMetrics.map((metric) => (
+            <View key={metric} style={styles.quickItem}>
               <View style={styles.quickIcon}>
-                <Text style={styles.quickIconGlyph}>{action.icon}</Text>
+                <Text style={styles.quickIconGlyph}>{QUICK_ACTION_ICON_BY_TAB[metric]}</Text>
               </View>
               <Text numberOfLines={1} style={styles.quickText}>
-                {action.label}
+                {metric}
               </Text>
             </View>
           ))}
@@ -1132,6 +2246,43 @@ export default function App() {
           </TouchableOpacity>
         ))}
       </View>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={showCreatePersonalChallengeModal}
+        onRequestClose={() => setShowCreatePersonalChallengeModal(false)}
+      >
+        <Pressable onPress={() => setShowCreatePersonalChallengeModal(false)} style={styles.challengeModalBackdrop}>
+          <Pressable onPress={() => {}} style={styles.challengeModalCard}>
+            <Text style={styles.challengeModalTitle}>Create Personal Challenge</Text>
+            <Text style={styles.challengeModalHint}>Add a challenge just for you.</Text>
+            <TextInput
+              onChangeText={setNewChallengeTitle}
+              placeholder="Challenge title"
+              placeholderTextColor="#64748b"
+              style={styles.challengeInput}
+              value={newChallengeTitle}
+            />
+            <TextInput
+              multiline
+              onChangeText={setNewChallengeDetail}
+              placeholder="Challenge details"
+              placeholderTextColor="#64748b"
+              style={[styles.challengeInput, styles.challengeInputMultiline]}
+              value={newChallengeDetail}
+            />
+            <View style={styles.challengeModalActions}>
+              <TouchableOpacity onPress={() => setShowCreatePersonalChallengeModal(false)} style={styles.challengeModalCancelBtn}>
+                <Text style={styles.challengeModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={createPersonalChallenge} style={styles.challengeModalCreateBtn}>
+                <Text style={styles.challengeModalCreateText}>Create</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {sidebarOpen ? (
         <View style={styles.sidebarOverlay}>
@@ -1190,13 +2341,13 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#050505',
+    backgroundColor: '#111827',
   },
   gridOverlay: {
     position: 'absolute',
     inset: 0,
-    backgroundColor: '#050505',
-    opacity: 0.45,
+    backgroundColor: '#111827',
+    opacity: 0.3,
   },
   topGlow: {
     position: 'absolute',
@@ -1205,19 +2356,21 @@ const styles = StyleSheet.create({
     width: 220,
     height: 220,
     borderRadius: 110,
-    backgroundColor: 'rgba(0,255,65,0.08)',
+    backgroundColor: 'rgba(125,162,199,0.1)',
   },
   content: {
     paddingTop: 52,
     paddingHorizontal: 16,
     paddingBottom: 90,
     gap: 8,
+    backgroundColor: '#111827',
   },
   mapScreen: {
     flex: 1,
     paddingTop: 60,
     paddingHorizontal: 16,
     paddingBottom: 84,
+    backgroundColor: '#111827',
   },
   mapTitle: {
     color: '#f8fafc',
@@ -1281,30 +2434,203 @@ const styles = StyleSheet.create({
   },
   insightsScreen: {
     flex: 1,
-    paddingTop: 60,
-    paddingHorizontal: 16,
-    paddingBottom: 84,
+    paddingTop: 54,
+    paddingHorizontal: 12,
+    paddingBottom: 78,
+    backgroundColor: '#111827',
   },
   insightsTitle: {
     color: '#f8fafc',
     fontSize: 22,
     fontWeight: '700',
   },
+  insightsStatusText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    marginTop: 4,
+    marginBottom: 4,
+    fontWeight: '600',
+  },
+  healthConnectBtn: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: 'rgba(59,130,246,0.6)',
+    backgroundColor: 'rgba(59,130,246,0.2)',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    marginBottom: 6,
+  },
+  healthConnectBtnDisabled: {
+    opacity: 0.55,
+  },
+  healthConnectBtnText: {
+    color: '#bfdbfe',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  healthErrorText: {
+    color: '#fca5a5',
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 6,
+    fontWeight: '600',
+  },
+  quickMetricSearchInput: {
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.4)',
+    backgroundColor: 'rgba(2,6,23,0.55)',
+    borderRadius: 10,
+    color: '#e2e8f0',
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    marginTop: 10,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  quickMetricSearchResults: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+    marginBottom: 6,
+  },
+  quickMetricOptionChip: {
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.45)',
+    backgroundColor: 'rgba(15,23,42,0.35)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  quickMetricOptionChipActive: {
+    borderColor: 'rgba(96,165,250,0.75)',
+    backgroundColor: 'rgba(59,130,246,0.3)',
+  },
+  quickMetricOptionText: {
+    color: '#cbd5e1',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  quickMetricOptionTextActive: {
+    color: '#eff6ff',
+  },
+  insightsTabStack: {
+    flex: 1,
+    gap: 6,
+  },
   insightsTabScroll: {
-    marginTop: 14,
-    marginBottom: 12,
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  insightsGroupCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 12,
+    backgroundColor: 'rgba(15,23,42,0.32)',
+    overflow: 'hidden',
+    position: 'relative',
+    paddingLeft: 10,
+  },
+  insightsGroupBand: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: 10,
+    height: 56,
+    borderBottomRightRadius: 8,
+  },
+  insightsGroupHeader: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
+  },
+  insightsGroupHeaderText: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  insightsGroupTitle: {
+    color: '#e2e8f0',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  insightsGroupSubtitle: {
+    color: '#94a3b8',
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  insightsGroupChevron: {
+    color: '#93c5fd',
+    fontSize: 18,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  insightsGroupBody: {
+    gap: 6,
+    padding: 8,
   },
   insightsTabRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
     paddingRight: 12,
   },
   insightsTab: {
+    width: '100%',
+    minHeight: 74,
+    flexDirection: 'row',
+    alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    paddingLeft: 20,
     backgroundColor: 'rgba(15,23,42,0.32)',
+    justifyContent: 'flex-start',
+    position: 'relative',
+  },
+  insightsTabMainPress: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  insightsSubTabBand: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 10,
+    borderTopLeftRadius: 12,
+    borderBottomLeftRadius: 12,
+    borderTopRightRadius: 6,
+    borderBottomRightRadius: 6,
+    opacity: 0.95,
+  },
+  insightsTabStarBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(15,23,42,0.45)',
+  },
+  insightsTabStarBtnActive: {
+    borderColor: 'rgba(251,191,36,0.7)',
+    backgroundColor: 'rgba(251,191,36,0.18)',
+  },
+  insightsTabStarText: {
+    color: '#fcd34d',
+    fontSize: 17,
+    lineHeight: 17,
+    fontWeight: '700',
   },
   insightsTabActive: {
     borderColor: 'rgba(59,130,246,0.7)',
@@ -1312,7 +2638,7 @@ const styles = StyleSheet.create({
   },
   insightsTabText: {
     color: '#9ca3af',
-    fontSize: 12,
+    fontSize: 18,
     fontWeight: '700',
   },
   insightsTabTextActive: {
@@ -1349,11 +2675,96 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginTop: 10,
   },
+  insightsChartHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  insightsChartUnit: {
+    color: '#94a3b8',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  insightsLineChartWrap: {
+    marginTop: 10,
+  },
+  insightsLineLabelsRow: {
+    marginTop: 2,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  insightsLineLabelItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  insightsChartValue: {
+    color: '#e2e8f0',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  insightsChartLabel: {
+    color: '#94a3b8',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  insightsPromptCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 14,
+    padding: 14,
+    backgroundColor: 'rgba(15,23,42,0.4)',
+  },
+  insightsPromptText: {
+    color: '#9ca3af',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  insightsDetailScreen: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 14,
+    padding: 14,
+    backgroundColor: 'rgba(15,23,42,0.4)',
+  },
+  insightsDetailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  insightsBackBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
+    backgroundColor: 'rgba(2,6,23,0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  insightsBackText: {
+    color: '#f8fafc',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  insightsDetailHeaderText: {
+    flex: 1,
+  },
+  insightsDetailSubtitle: {
+    color: '#94a3b8',
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: '600',
+  },
   goalsScreen: {
     flex: 1,
     paddingTop: 60,
     paddingHorizontal: 16,
     paddingBottom: 84,
+    backgroundColor: '#111827',
   },
   goalsTitle: {
     color: '#f8fafc',
@@ -1376,8 +2787,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15,23,42,0.32)',
   },
   goalsTabActive: {
-    borderColor: 'rgba(34,197,94,0.65)',
-    backgroundColor: 'rgba(34,197,94,0.18)',
+    borderColor: 'rgba(125,162,199,0.72)',
+    backgroundColor: 'rgba(125,162,199,0.2)',
   },
   goalsTabText: {
     color: '#9ca3af',
@@ -1385,7 +2796,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   goalsTabTextActive: {
-    color: '#bbf7d0',
+    color: '#dbeafe',
   },
   goalsScroll: {
     flex: 1,
@@ -1403,8 +2814,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(30,58,138,0.2)',
   },
   challengePersonalCard: {
-    borderColor: 'rgba(16,185,129,0.55)',
-    backgroundColor: 'rgba(6,78,59,0.2)',
+    borderColor: 'rgba(124,184,155,0.55)',
+    backgroundColor: 'rgba(24,59,47,0.28)',
   },
   challengeHeaderRow: {
     flexDirection: 'row',
@@ -1426,9 +2837,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(30,64,175,0.45)',
   },
   challengeTypePersonal: {
-    color: '#86efac',
-    borderColor: 'rgba(52,211,153,0.7)',
-    backgroundColor: 'rgba(6,95,70,0.45)',
+    color: '#d1fae5',
+    borderColor: 'rgba(124,184,155,0.68)',
+    backgroundColor: 'rgba(38,84,67,0.52)',
   },
   challengeFilterRow: {
     flexDirection: 'row',
@@ -1448,9 +2859,9 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   challengeFilterTabActive: {
-    backgroundColor: 'rgba(34,197,94,0.2)',
+    backgroundColor: 'rgba(125,162,199,0.22)',
     borderWidth: 1,
-    borderColor: 'rgba(74,222,128,0.45)',
+    borderColor: 'rgba(125,162,199,0.5)',
   },
   challengeFilterText: {
     color: '#94a3b8',
@@ -1458,7 +2869,90 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   challengeFilterTextActive: {
-    color: '#dcfce7',
+    color: '#e2e8f0',
+  },
+  createPersonalChallengeBtn: {
+    borderWidth: 1,
+    borderColor: 'rgba(124,184,155,0.55)',
+    backgroundColor: 'rgba(38,84,67,0.3)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  createPersonalChallengeBtnText: {
+    color: '#d1fae5',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  challengeModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(2,6,23,0.68)',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  challengeModalCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(15,23,42,0.98)',
+    padding: 14,
+  },
+  challengeModalTitle: {
+    color: '#f8fafc',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  challengeModalHint: {
+    color: '#94a3b8',
+    fontSize: 12,
+    marginTop: 4,
+    marginBottom: 10,
+  },
+  challengeInput: {
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    color: '#e2e8f0',
+    fontSize: 13,
+    marginBottom: 10,
+    backgroundColor: 'rgba(2,6,23,0.4)',
+  },
+  challengeInputMultiline: {
+    minHeight: 78,
+    textAlignVertical: 'top',
+  },
+  challengeModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  challengeModalCancelBtn: {
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  challengeModalCancelText: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  challengeModalCreateBtn: {
+    borderWidth: 1,
+    borderColor: 'rgba(124,184,155,0.62)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(38,84,67,0.56)',
+  },
+  challengeModalCreateText: {
+    color: '#d1fae5',
+    fontSize: 12,
+    fontWeight: '700',
   },
   goalsCardTitle: {
     color: '#f1f5f9',
@@ -1472,7 +2966,7 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   goalsCardMeta: {
-    color: '#4ade80',
+    color: '#9ccfc7',
     fontSize: 11,
     fontWeight: '700',
     marginTop: 8,
@@ -1531,14 +3025,14 @@ const styles = StyleSheet.create({
   },
   communityJoinBtn: {
     marginTop: 'auto',
-    backgroundColor: '#22c55e',
+    backgroundColor: '#7CB89B',
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 8,
   },
   communityJoinText: {
-    color: '#022c22',
+    color: '#0f2a22',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -1572,7 +3066,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   communityHeroTag: {
-    color: '#bbf7d0',
+    color: '#d1fae5',
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.5,
@@ -1650,9 +3144,9 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 420,
     borderWidth: 1,
-    borderColor: 'rgba(34,197,94,0.45)',
+    borderColor: 'rgba(124,184,155,0.45)',
     borderRadius: 14,
-    backgroundColor: 'rgba(6,18,14,0.96)',
+    backgroundColor: 'rgba(10,20,18,0.96)',
     padding: 14,
   },
   communityOverviewPopupHeader: {
@@ -1662,7 +3156,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   communityOverviewPopupTitle: {
-    color: '#bbf7d0',
+    color: '#d1fae5',
     fontSize: 14,
     fontWeight: '800',
   },
@@ -1682,7 +3176,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   communityOverviewPopupText: {
-    color: '#d1fae5',
+    color: '#dbe7e3',
     fontSize: 12,
     lineHeight: 18,
   },
@@ -1713,12 +3207,12 @@ const styles = StyleSheet.create({
   },
   inviteContactBtn: {
     borderRadius: 999,
-    backgroundColor: '#22c55e',
+    backgroundColor: '#7CB89B',
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
   inviteContactBtnText: {
-    color: '#022c22',
+    color: '#0f2a22',
     fontSize: 11,
     fontWeight: '800',
   },
@@ -1737,13 +3231,13 @@ const styles = StyleSheet.create({
   createPostBtn: {
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: 'rgba(34,197,94,0.6)',
-    backgroundColor: 'rgba(34,197,94,0.2)',
+    borderColor: 'rgba(124,184,155,0.62)',
+    backgroundColor: 'rgba(124,184,155,0.2)',
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
   createPostBtnText: {
-    color: '#bbf7d0',
+    color: '#d1fae5',
     fontSize: 11,
     fontWeight: '800',
   },
@@ -2342,7 +3836,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     height: 72,
-    backgroundColor: '#050505',
+    backgroundColor: '#111827',
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
