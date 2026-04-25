@@ -13,7 +13,12 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.martindnha.InsightsScreenExpo",
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "This app reads your Apple Health data to show personalized insights.",
+        "NSHealthUpdateUsageDescription": "This app may write selected wellness updates to Apple Health."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -21,7 +26,8 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.martindnha.InsightsScreenExpo"
     },
     "web": {
       "favicon": "./assets/favicon.png"
