@@ -8,9 +8,10 @@ pnpm-debug.log*
 # Local docs / scratch artifacts
 AppIdea.docx
 AppIdea.txt
-~$*.docx
 Arista-Zetic-Workflow-Summary.txt
 Cloudinary-Firestore-Hackathon-Workflow.txt
+Event-Detection-Workflow.txt
+Implementation-Checklist-Progress-Post-Pipeline.txt
 Unified-Architecture-Arista-Zetic-Cloudinary-Firebase.txt
 
 # Node / Expo
@@ -21,3 +22,10 @@ Unified-Architecture-Arista-Zetic-Cloudinary-Firebase.txt
 **/build/
 **/.env
 **/.env.*
+**/*.local
+
+# Local secrets / service credentials
+**/serviceAccountKey*.json
+**/firebase-adminsdk*.json
+**/GoogleService-Info.local.plist
+**/google-services.local.json

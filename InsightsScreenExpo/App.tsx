@@ -1,11 +1,14 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Linking, Modal, NativeModules, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Image, Keyboard, KeyboardAvoidingView, Linking, Modal, NativeModules, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Svg, { Circle, Defs, LinearGradient, Path, Stop, Text as SvgText } from 'react-native-svg';
 import * as Location from 'expo-location';
 import * as Contacts from 'expo-contacts';
+import * as ImagePicker from 'expo-image-picker';
 import * as AppleHealthKitModule from 'react-native-health';
 import MapView, { Marker } from 'react-native-maps';
+import { initializeApp, getApp, getApps } from 'firebase/app';
+import { addDoc, collection, getFirestore, serverTimestamp, type Firestore } from 'firebase/firestore';
 import { getNextDemoScore, getScorePresentation } from './src/services/scoringService';
 import { fetchCurrentWeather } from './src/services/weatherService';
 
@@ -276,6 +279,86 @@ const COMMUNITY_PROGRESS_POSTS = [
   { id: '3', author: 'Nora P.', time: '2d ago', caption: 'Sleep score improved after reducing caffeine at night.', imageLabel: 'Sleep stats screenshot' },
 ] as const;
 
+type ProgressPostStatus = 'processing' | 'ready' | 'failed';
+type ProgressBoardPost = {
+  id: string;
+  author: string;
+  time: string;
+  caption: string;
+  imageLabel: string;
+  imageUrl: string | null;
+  mediaPublicId: string | null;
+  mediaType: 'image';
+  status: ProgressPostStatus;
+  processingError: string | null;
+};
+
+const CLOUDINARY_CLOUD_NAME = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME ?? '';
+const CLOUDINARY_UPLOAD_PRESET = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET ?? '';
+const FIREBASE_CONFIG = {
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY ?? '',
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN ?? '',
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? '',
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET ?? '',
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? '',
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID ?? '',
+};
+
+const hasFirebaseConfig = Object.values(FIREBASE_CONFIG).every((value) => value.trim().length > 0);
+const hasCloudinaryConfig = CLOUDINARY_CLOUD_NAME.trim().length > 0 && CLOUDINARY_UPLOAD_PRESET.trim().length > 0;
+
+let firestoreInstance: Firestore | null = null;
+const getFirestoreInstance = (): Firestore | null => {
+  if (!hasFirebaseConfig) {
+    return null;
+  }
+  if (firestoreInstance) {
+    return firestoreInstance;
+  }
+  const app = getApps().length > 0 ? getApp() : initializeApp(FIREBASE_CONFIG);
+  firestoreInstance = getFirestore(app);
+  return firestoreInstance;
+};
+
+const cloudinaryUploadEndpoint = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
+
+const deriveImageName = (uri: string) => {
+  const lastSegment = uri.split('/').pop();
+  if (lastSegment && lastSegment.includes('.')) {
+    return lastSegment;
+  }
+  return `post-${Date.now()}.jpg`;
+};
+
+const uploadImageToCloudinary = async (imageUri: string): Promise<{ secureUrl: string; publicId: string }> => {
+  if (!hasCloudinaryConfig) {
+    throw new Error('Cloudinary is not configured. Set EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME and EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET.');
+  }
+  const formData = new FormData();
+  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  formData.append('file', {
+    uri: imageUri,
+    name: deriveImageName(imageUri),
+    type: 'image/jpeg',
+  } as unknown as Blob);
+  const response = await fetch(cloudinaryUploadEndpoint, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Cloudinary upload failed: ${errorText}`);
+  }
+  const json = await response.json() as { secure_url?: string; public_id?: string };
+  if (!json.secure_url || !json.public_id) {
+    throw new Error('Cloudinary upload response is missing secure_url/public_id.');
+  }
+  return {
+    secureUrl: json.secure_url,
+    publicId: json.public_id,
+  };
+};
+
 const COMMUNITY_OVERVIEW_DESCRIPTION =
   'This community helps members build consistent wellness habits through shared accountability, weekly events, and progress updates.';
 
@@ -467,6 +550,7 @@ function InsightsBulbIcon({ active }: { active: boolean }) {
 }
 
 export default function App() {
+  const mapViewRef = useRef<MapView | null>(null);
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [healthScore, setHealthScore] = useState(72);
@@ -522,6 +606,11 @@ export default function App() {
   const [isInteractingWithEventsList, setIsInteractingWithEventsList] = useState(false);
   const [showOverviewPopup, setShowOverviewPopup] = useState(false);
   const [showInvitePopup, setShowInvitePopup] = useState(false);
+  const [showCreateProgressPostModal, setShowCreateProgressPostModal] = useState(false);
+  const [createPostCaption, setCreatePostCaption] = useState('');
+  const [createPostImageUri, setCreatePostImageUri] = useState<string | null>(null);
+  const [isPublishingProgressPost, setIsPublishingProgressPost] = useState(false);
+  const [communityCustomPostsByName, setCommunityCustomPostsByName] = useState<Record<string, ProgressBoardPost[]>>({});
   const [showAlertsScreen, setShowAlertsScreen] = useState(false);
   const [inviteContacts, setInviteContacts] = useState<InviteContact[]>([]);
   const [loadingInviteContacts, setLoadingInviteContacts] = useState(false);
@@ -679,6 +768,35 @@ export default function App() {
           title: item.title,
           subtitle: item.subtitle,
         }));
+  const recenterMapToCurrentLocation = async () => {
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setMapLocationStatus('denied');
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const nextCoords = {
+        lat: pos.coords.latitude,
+        lon: pos.coords.longitude,
+      };
+      setMapLocationStatus('granted');
+      setMapCoords(nextCoords);
+      mapViewRef.current?.animateToRegion(
+        {
+          latitude: nextCoords.lat,
+          longitude: nextCoords.lon,
+          latitudeDelta: 0.012,
+          longitudeDelta: 0.012,
+        },
+        500,
+      );
+    } catch {
+      setMapLocationStatus('denied');
+    }
+  };
   const joinedCommunities = COMMUNITY_DISCOVERY.filter((community) => joinedCommunityNames.includes(community.name));
   const selectedJoinedCommunity = selectedJoinedCommunityName
     ? joinedCommunities.find((community) => community.name === selectedJoinedCommunityName) ?? null
@@ -705,6 +823,23 @@ export default function App() {
   const selectedCommunityShareLink = selectedJoinedCommunity
     ? `https://connectedwellness.app/community/${toShareSlug(selectedJoinedCommunity.name)}?invite=demo2026`
     : null;
+  const progressPostsForSelectedCommunity: ProgressBoardPost[] = selectedJoinedCommunity == null
+    ? []
+    : [
+        ...(communityCustomPostsByName[selectedJoinedCommunity.name] ?? []),
+        ...COMMUNITY_PROGRESS_POSTS.map((post) => ({
+          id: `seed-${post.id}`,
+          author: post.author,
+          time: post.time,
+          caption: post.caption,
+          imageLabel: post.imageLabel,
+          imageUrl: null,
+          mediaPublicId: null,
+          mediaType: 'image' as const,
+          status: 'ready' as const,
+          processingError: null,
+        })),
+      ];
   const filteredQuickMetricOptions = QUICK_ACTION_METRIC_OPTIONS.filter((metric) => {
     const query = quickMetricSearchQuery.trim().toLowerCase();
     if (!query) {
@@ -761,6 +896,158 @@ export default function App() {
     setNewChallengeTitle('');
     setNewChallengeDetail('');
     setShowCreatePersonalChallengeModal(false);
+  };
+
+  const pickProgressPostImage = async (source: 'library' | 'camera') => {
+    try {
+      const result = source === 'camera'
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            // iOS camera editing can crash on some native stacks; keep capture path stable.
+            allowsEditing: false,
+            quality: 0.86,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            quality: 0.86,
+          });
+      if (result.canceled || result.assets.length === 0) {
+        return;
+      }
+      setCreatePostImageUri(result.assets[0].uri);
+      setCreatePostCaption('');
+      setShowCreateProgressPostModal(true);
+    } catch (error) {
+      Alert.alert('Camera error', toErrorText(error));
+    }
+  };
+
+  const launchCreatePostFromSource = async (source: 'library' | 'camera') => {
+    if (source === 'camera') {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (permission.status !== 'granted') {
+        Alert.alert('Camera permission required', 'Enable camera access to take a photo for your post.');
+        return;
+      }
+    } else {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permission.status !== 'granted') {
+        Alert.alert('Photos permission required', 'Enable photo library access to add an image post.');
+        return;
+      }
+    }
+    // Defer presentation so iOS finishes dismissing the alert first.
+    setTimeout(() => {
+      pickProgressPostImage(source).catch((error) => {
+        Alert.alert('Media picker error', toErrorText(error));
+      });
+    }, 250);
+  };
+
+  const openCreateProgressPostModal = async () => {
+    if (!selectedJoinedCommunity) {
+      Alert.alert('Select a community', 'Open a joined community before creating a post.');
+      return;
+    }
+    Alert.alert('Create Post', 'Choose how you want to add a photo.', [
+      {
+        text: 'Take Photo',
+        onPress: () => {
+          launchCreatePostFromSource('camera').catch((error) => {
+            Alert.alert('Camera error', toErrorText(error));
+          });
+        },
+      },
+      {
+        text: 'Photo Library',
+        onPress: () => {
+          launchCreatePostFromSource('library').catch((error) => {
+            Alert.alert('Photo library error', toErrorText(error));
+          });
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const updateCommunityPost = (communityName: string, postId: string, patch: Partial<ProgressBoardPost>) => {
+    setCommunityCustomPostsByName((prev) => {
+      const posts = prev[communityName] ?? [];
+      return {
+        ...prev,
+        [communityName]: posts.map((post) => (post.id === postId ? { ...post, ...patch } : post)),
+      };
+    });
+  };
+
+  const createProgressPost = async () => {
+    if (!selectedJoinedCommunity || !createPostImageUri) {
+      return;
+    }
+    const trimmedCaption = createPostCaption.trim();
+    const resolvedCaption = trimmedCaption.length > 0 ? trimmedCaption : 'Shared a progress photo.';
+    setIsPublishingProgressPost(true);
+    const communityName = selectedJoinedCommunity.name;
+    const localPostId = `local-${Date.now()}`;
+    const optimisticPost: ProgressBoardPost = {
+      id: localPostId,
+      author: 'You',
+      time: 'Just now',
+      caption: resolvedCaption,
+      imageLabel: 'Uploading progress photo...',
+      imageUrl: createPostImageUri,
+      mediaPublicId: null,
+      mediaType: 'image',
+      status: 'processing',
+      processingError: null,
+    };
+    setCommunityCustomPostsByName((prev) => ({
+      ...prev,
+      [communityName]: [optimisticPost, ...(prev[communityName] ?? [])],
+    }));
+    try {
+      const cloudinaryResult = await uploadImageToCloudinary(createPostImageUri);
+      const firestore = getFirestoreInstance();
+      if (firestore) {
+        await addDoc(collection(firestore, 'progress_posts'), {
+          communityId: toShareSlug(communityName),
+          communityName,
+          authorId: 'demo-user',
+          authorName: 'You',
+          caption: resolvedCaption,
+          mediaUrl: cloudinaryResult.secureUrl,
+          mediaPublicId: cloudinaryResult.publicId,
+          mediaType: 'image',
+          status: 'processing',
+          autoDescription: '',
+          autoTags: [],
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      updateCommunityPost(communityName, localPostId, {
+        imageLabel: 'Uploaded progress photo',
+        imageUrl: cloudinaryResult.secureUrl,
+        mediaPublicId: cloudinaryResult.publicId,
+        status: 'ready',
+      });
+      setShowCreateProgressPostModal(false);
+      setCreatePostCaption('');
+      setCreatePostImageUri(null);
+      if (!hasFirebaseConfig) {
+        Alert.alert('Local-only mode', 'Post uploaded to Cloudinary. Add EXPO_PUBLIC_FIREBASE_* vars to also write Firestore records.');
+      }
+    } catch (error) {
+      updateCommunityPost(communityName, localPostId, {
+        imageLabel: 'Upload failed',
+        status: 'failed',
+        processingError: toErrorText(error),
+      });
+      Alert.alert('Post upload failed', toErrorText(error));
+    } finally {
+      setIsPublishingProgressPost(false);
+    }
   };
 
   const inviteContactBySms = async (contact: InviteContact) => {
@@ -1761,6 +2048,7 @@ export default function App() {
           {mapCoords ? (
             <View style={styles.mapContainer}>
               <MapView
+                ref={mapViewRef}
                 region={{
                   latitude: mapCoords.lat,
                   longitude: mapCoords.lon,
@@ -1781,6 +2069,9 @@ export default function App() {
                   />
                 ))}
               </MapView>
+              <TouchableOpacity onPress={() => void recenterMapToCurrentLocation()} style={styles.mapRecenterBtn}>
+                <Text style={styles.mapRecenterBtnText}>Locate Me</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.mapFallbackCard}>
@@ -2160,19 +2451,28 @@ export default function App() {
                     <View>
                       <View style={styles.progressBoardHeader}>
                         <Text style={styles.progressBoardTitle}>Progress Board</Text>
-                        <TouchableOpacity style={styles.createPostBtn}>
+                        <TouchableOpacity onPress={openCreateProgressPostModal} style={styles.createPostBtn}>
                           <Text style={styles.createPostBtnText}>+ Create Post</Text>
                         </TouchableOpacity>
                       </View>
-                      {COMMUNITY_PROGRESS_POSTS.map((post) => (
+                      {progressPostsForSelectedCommunity.map((post) => (
                         <View key={`${selectedJoinedCommunity.name}-${post.id}`} style={styles.progressPostCard}>
                           <View style={styles.progressPostHeader}>
                             <Text style={styles.progressPostAuthor}>{post.author}</Text>
                             <Text style={styles.progressPostTime}>{post.time}</Text>
                           </View>
                           <Text style={styles.progressPostCaption}>{post.caption}</Text>
+                          {post.status !== 'ready' ? (
+                            <Text style={styles.progressPostStatus}>
+                              {post.status === 'processing' ? 'Analyzing image...' : 'Upload failed. Tap Create Post to retry.'}
+                            </Text>
+                          ) : null}
                           <View style={styles.progressPostImage}>
-                            <Text style={styles.progressPostImageText}>{post.imageLabel}</Text>
+                            {post.imageUrl ? (
+                              <Image resizeMode="cover" source={{ uri: post.imageUrl }} style={styles.progressPostImageActual} />
+                            ) : (
+                              <Text style={styles.progressPostImageText}>{post.imageLabel}</Text>
+                            )}
                           </View>
                         </View>
                       ))}
@@ -2665,6 +2965,55 @@ export default function App() {
       </Modal>
 
       <Modal
+        animationType="fade"
+        transparent
+        visible={showCreateProgressPostModal}
+        onRequestClose={() => setShowCreateProgressPostModal(false)}
+      >
+        <Pressable onPress={() => setShowCreateProgressPostModal(false)} style={styles.challengeModalBackdrop}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
+            style={styles.createPostKeyboardAvoiding}
+          >
+            <Pressable onPress={Keyboard.dismiss} style={styles.challengeModalCard}>
+              <Text style={styles.challengeModalTitle}>Create Progress Post</Text>
+              <Text style={styles.challengeModalHint}>Upload a photo and caption your update.</Text>
+              {createPostImageUri ? (
+                <Image resizeMode="cover" source={{ uri: createPostImageUri }} style={styles.createPostPreviewImage} />
+              ) : null}
+              <TextInput
+                multiline
+                onChangeText={setCreatePostCaption}
+                placeholder="What progress did you make today?"
+                placeholderTextColor="#64748b"
+                style={[styles.challengeInput, styles.challengeInputMultiline]}
+                value={createPostCaption}
+              />
+              <View style={styles.challengeModalActions}>
+                <TouchableOpacity
+                  disabled={isPublishingProgressPost}
+                  onPress={() => setShowCreateProgressPostModal(false)}
+                  style={styles.challengeModalCancelBtn}
+                >
+                  <Text style={styles.challengeModalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  disabled={isPublishingProgressPost}
+                  onPress={createProgressPost}
+                  style={styles.challengeModalCreateBtn}
+                >
+                  <Text style={styles.challengeModalCreateText}>
+                    {isPublishingProgressPost ? 'Publishing...' : 'Publish'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
+
+      <Modal
         animationType="slide"
         transparent
         visible={showAlertsScreen}
@@ -2906,6 +3255,22 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
+  },
+  mapRecenterBtn: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(59,130,246,0.7)',
+    backgroundColor: 'rgba(15,23,42,0.86)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  mapRecenterBtnText: {
+    color: '#bfdbfe',
+    fontSize: 12,
+    fontWeight: '700',
   },
   mapFallbackCard: {
     borderWidth: 1,
@@ -3391,6 +3756,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15,23,42,0.98)',
     padding: 14,
   },
+  createPostKeyboardAvoiding: {
+    width: '100%',
+  },
   challengeModalTitle: {
     color: '#f8fafc',
     fontSize: 16,
@@ -3860,6 +4228,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 10,
   },
+  progressPostStatus: {
+    color: '#93c5fd',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: -2,
+    marginBottom: 8,
+  },
   progressPostImage: {
     borderRadius: 10,
     borderWidth: 1,
@@ -3868,11 +4243,22 @@ const styles = StyleSheet.create({
     height: 148,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  progressPostImageActual: {
+    width: '100%',
+    height: '100%',
   },
   progressPostImageText: {
     color: '#94a3b8',
     fontSize: 12,
     fontWeight: '600',
+  },
+  createPostPreviewImage: {
+    width: '100%',
+    height: 144,
+    borderRadius: 12,
+    marginBottom: 12,
   },
   leaderRow: {
     flexDirection: 'row',
