@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Linking, Modal, NativeModules, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Linking, Modal, NativeModules, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Svg, { Circle, Defs, LinearGradient, Path, Stop, Text as SvgText } from 'react-native-svg';
 import * as Location from 'expo-location';
 import * as Contacts from 'expo-contacts';
@@ -163,12 +163,60 @@ const QUICK_ACTION_ICON_BY_TAB: Record<InsightTab, string> = {
   'Blood Glucose': '◈',
 };
 
+let Notifications: typeof import('expo-notifications') | null = null;
+try {
+  // If the current binary was built before expo-notifications was added,
+  // requiring it can fail with missing native module errors.
+  const notificationsModule = require('expo-notifications') as typeof import('expo-notifications');
+  Notifications = notificationsModule;
+  notificationsModule.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+} catch {
+  Notifications = null;
+}
+const QUICK_ACTION_THEME_COLOR_BY_TAB: Record<InsightTab, string> = {
+  'Heart Rate': '#7DA2C7',
+  'Resting Heart Rate': '#7DA2C7',
+  'Heart Rate Variability': '#7DA2C7',
+  'Respiratory Rate': '#7DA2C7',
+  'Blood Oxygen': '#7DA2C7',
+  Steps: '#7CB89B',
+  'Walking + Running Distance': '#7CB89B',
+  'Flights Climbed': '#7CB89B',
+  'Active Energy': '#7CB89B',
+  'Basal Energy': '#7CB89B',
+  'Exercise Time': '#7CB89B',
+  'Stand Time': '#7CB89B',
+  Sleep: '#9B8FC6',
+  Mindfulness: '#9B8FC6',
+  'Body Temperature': '#C7A77D',
+  Weight: '#C7A77D',
+  'VO2 Max': '#7CB89B',
+  'Blood Glucose': '#C7A77D',
+};
+
 const ACTIVITY = [
   { label: 'STEPS', value: '6,842', fill: 85, color: '#22c55e' },
   { label: 'SLEEP', value: '7h 15m', fill: 95, color: '#22c55e' },
   { label: 'MEDS', value: '2/2', fill: 100, color: '#22c55e' },
   { label: 'WATER', value: '6gl', fill: 75, color: '#3b82f6' },
 ];
+
+type DashboardValueDriftToggles = {
+  glucose: boolean;
+  stress: boolean;
+  heartRateCard: boolean;
+  steps: boolean;
+  sleep: boolean;
+  meds: boolean;
+  water: boolean;
+};
 
 const NAV_ITEMS = [
   { label: 'Dashboard', icon: '◉' },
@@ -395,12 +443,53 @@ function ActivityMiniIcon({ label }: { label: string }) {
   );
 }
 
+function InsightsBulbIcon({ active }: { active: boolean }) {
+  const color = active ? '#3b82f6' : '#52525b';
+  return (
+    <Svg height={26} viewBox="0 0 24 24" width={26}>
+      <Path
+        d="M12 3.2a6.4 6.4 0 0 0-4.3 11.1c.9.8 1.6 1.9 1.9 3h4.8c.3-1.1 1-2.2 1.9-3A6.4 6.4 0 0 0 12 3.2Z"
+        fill="none"
+        stroke={color}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.8}
+      />
+      <Path
+        d="M9.7 19h4.6M10.3 21h3.4"
+        fill="none"
+        stroke={color}
+        strokeLinecap="round"
+        strokeWidth={1.8}
+      />
+    </Svg>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [healthScore, setHealthScore] = useState(72);
   const [demoScoreDriftEnabled, setDemoScoreDriftEnabled] = useState(false);
   const [demoFastDriftEnabled, setDemoFastDriftEnabled] = useState(false);
+  const [demoAlertEnabled, setDemoAlertEnabled] = useState(false);
+  const [demoToolsDropdownOpen, setDemoToolsDropdownOpen] = useState(false);
+  const [demoDashboardValueDrift, setDemoDashboardValueDrift] = useState<DashboardValueDriftToggles>({
+    glucose: false,
+    stress: false,
+    heartRateCard: false,
+    steps: false,
+    sleep: false,
+    meds: false,
+    water: false,
+  });
+  const [glucoseValue, setGlucoseValue] = useState(142);
+  const [stressValue, setStressValue] = useState(78);
+  const [heartRateCardValue, setHeartRateCardValue] = useState(68);
+  const [activitySteps, setActivitySteps] = useState(6842);
+  const [activitySleepMinutes, setActivitySleepMinutes] = useState(435);
+  const [activityMedsTaken, setActivityMedsTaken] = useState(2);
+  const [activityWaterGlasses, setActivityWaterGlasses] = useState(6);
   const [useDeviceLocation, setUseDeviceLocation] = useState(false);
   const [locationStatus, setLocationStatus] = useState<'off' | 'granted' | 'denied'>('off');
   const [locationCoords, setLocationCoords] = useState<{ lat: number; lon: number } | null>(null);
@@ -433,6 +522,7 @@ export default function App() {
   const [isInteractingWithEventsList, setIsInteractingWithEventsList] = useState(false);
   const [showOverviewPopup, setShowOverviewPopup] = useState(false);
   const [showInvitePopup, setShowInvitePopup] = useState(false);
+  const [showAlertsScreen, setShowAlertsScreen] = useState(false);
   const [inviteContacts, setInviteContacts] = useState<InviteContact[]>([]);
   const [loadingInviteContacts, setLoadingInviteContacts] = useState(false);
   const [startupPermissionsRequested, setStartupPermissionsRequested] = useState(false);
@@ -440,8 +530,86 @@ export default function App() {
   const [weatherLabel, setWeatherLabel] = useState('Sunny');
   const [foodSuggestionCollapsed, setFoodSuggestionCollapsed] = useState(false);
   const scoreDirectionRef = useRef<1 | -1>(1);
+  const previousAlertDemoEnabledRef = useRef(false);
+  const heartPulseAnim = useRef(new Animated.Value(0)).current;
+  const alertBadgeBounceAnim = useRef(new Animated.Value(0)).current;
   const displayScore = Math.round(healthScore);
   const scorePresentation = getScorePresentation(displayScore);
+  const alertCount = demoAlertEnabled ? 3 : 0;
+  const allDemoToolsEnabled =
+    demoScoreDriftEnabled && Object.values(demoDashboardValueDrift).every(Boolean);
+  const alertItems = demoAlertEnabled
+    ? [
+        { id: 'a1', title: 'Abnormal Glucose', detail: 'Glucose measured at 192 mg/dL.', severity: 'High' },
+        { id: 'a2', title: 'Elevated Stress', detail: 'Stress index reached 84/100.', severity: 'High' },
+        { id: 'a3', title: 'Abnormal Heart Rate', detail: 'Resting heart rate detected at 104 bpm.', severity: 'High' },
+      ]
+    : [];
+  const toggleDashboardValueDrift = (key: keyof DashboardValueDriftToggles) => {
+    setDemoDashboardValueDrift((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+  const toggleAllDemoTools = () => {
+    const next = !allDemoToolsEnabled;
+    setDemoScoreDriftEnabled(next);
+    setDemoDashboardValueDrift({
+      glucose: next,
+      stress: next,
+      heartRateCard: next,
+      steps: next,
+      sleep: next,
+      meds: next,
+      water: next,
+    });
+  };
+  const dashboardMetrics = [
+    {
+      label: 'GLUCOSE',
+      value: Math.round(glucoseValue).toString(),
+      unit: 'MG/DL',
+      status: glucoseValue >= 170 ? 'HIGH' : glucoseValue <= 85 ? 'LOW' : 'NORMAL',
+      statusColor: glucoseValue >= 170 ? '#ef4444' : glucoseValue <= 85 ? '#f59e0b' : '#7CB89B',
+    },
+    {
+      label: 'STRESS LEVEL',
+      value: Math.round(stressValue).toString(),
+      unit: '/100',
+      status: stressValue >= 70 ? 'HIGH' : stressValue <= 35 ? 'LOW' : 'NORMAL',
+      statusColor: stressValue >= 70 ? '#f97316' : stressValue <= 35 ? '#7DA2C7' : '#7CB89B',
+    },
+    {
+      label: 'HEART RATE',
+      value: Math.round(heartRateCardValue).toString(),
+      unit: 'BPM',
+      status: heartRateCardValue >= 95 ? 'HIGH' : heartRateCardValue <= 52 ? 'LOW' : 'NORMAL',
+      statusColor: heartRateCardValue >= 95 ? '#f59e0b' : heartRateCardValue <= 52 ? '#7DA2C7' : '#7CB89B',
+    },
+  ];
+  const dashboardActivity = [
+    {
+      label: 'STEPS',
+      value: activitySteps.toLocaleString(),
+      fill: Math.max(8, Math.min(100, Math.round((activitySteps / 8000) * 100))),
+      color: '#7CB89B',
+    },
+    {
+      label: 'SLEEP',
+      value: `${Math.floor(activitySleepMinutes / 60)}h ${String(activitySleepMinutes % 60).padStart(2, '0')}m`,
+      fill: Math.max(8, Math.min(100, Math.round((activitySleepMinutes / (8 * 60)) * 100))),
+      color: '#9B8FC6',
+    },
+    {
+      label: 'MEDS',
+      value: `${activityMedsTaken}/2`,
+      fill: Math.max(8, Math.min(100, Math.round((activityMedsTaken / 2) * 100))),
+      color: '#7DA2C7',
+    },
+    {
+      label: 'WATER',
+      value: `${activityWaterGlasses}gl`,
+      fill: Math.max(8, Math.min(100, Math.round((activityWaterGlasses / 8) * 100))),
+      color: '#C7A77D',
+    },
+  ];
   const centerX = 160;
   const centerY = 174;
   const startDeg = 205;
@@ -1267,6 +1435,13 @@ export default function App() {
       } catch {
         // Ignore startup permission failures; user can retry in feature flows.
       }
+      if (Notifications?.requestPermissionsAsync) {
+        try {
+          await Notifications.requestPermissionsAsync();
+        } catch {
+          // Ignore startup permission failures; user can retry in feature flows.
+        }
+      }
       if (!cancelled) {
         void initHealthKitAsync();
       }
@@ -1356,6 +1531,139 @@ export default function App() {
     }, intervalMs);
     return () => clearInterval(interval);
   }, [demoScoreDriftEnabled, demoFastDriftEnabled]);
+
+  useEffect(() => {
+    const pulseLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(heartPulseAnim, {
+          toValue: 1,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+        Animated.timing(heartPulseAnim, {
+          toValue: 0,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    pulseLoop.start();
+    return () => pulseLoop.stop();
+  }, [heartPulseAnim]);
+
+  useEffect(() => {
+    if (alertCount <= 0) {
+      alertBadgeBounceAnim.setValue(0);
+      return;
+    }
+    const bounceLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(alertBadgeBounceAnim, {
+          toValue: 1,
+          duration: 220,
+          useNativeDriver: true,
+        }),
+        Animated.timing(alertBadgeBounceAnim, {
+          toValue: 0,
+          duration: 320,
+          useNativeDriver: true,
+        }),
+        Animated.delay(560),
+      ]),
+    );
+    bounceLoop.start();
+    return () => bounceLoop.stop();
+  }, [alertCount, alertBadgeBounceAnim]);
+
+  useEffect(() => {
+    const anyDashboardDriftEnabled = Object.values(demoDashboardValueDrift).some(Boolean);
+    if (!anyDashboardDriftEnabled) {
+      return;
+    }
+    const intervalMs = demoFastDriftEnabled ? 380 : 760;
+    const interval = setInterval(() => {
+      const jitter = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
+      if (demoDashboardValueDrift.glucose) {
+        setGlucoseValue((prev) => Math.max(70, Math.min(240, prev + jitter(-5, 6))));
+      }
+      if (demoDashboardValueDrift.stress) {
+        setStressValue((prev) => Math.max(0, Math.min(100, prev + jitter(-4, 5))));
+      }
+      if (demoDashboardValueDrift.heartRateCard) {
+        setHeartRateCardValue((prev) => Math.max(45, Math.min(130, prev + jitter(-3, 4))));
+      }
+      if (demoDashboardValueDrift.steps) {
+        setActivitySteps((prev) => Math.max(0, Math.min(25000, prev + jitter(40, 280))));
+      }
+      if (demoDashboardValueDrift.sleep) {
+        setActivitySleepMinutes((prev) => Math.max(180, Math.min(600, prev + jitter(-12, 14))));
+      }
+      if (demoDashboardValueDrift.meds) {
+        setActivityMedsTaken((prev) => {
+          const next = prev + jitter(-1, 1);
+          return Math.max(0, Math.min(2, next));
+        });
+      }
+      if (demoDashboardValueDrift.water) {
+        setActivityWaterGlasses((prev) => Math.max(0, Math.min(12, prev + jitter(-1, 1))));
+      }
+    }, intervalMs);
+    return () => clearInterval(interval);
+  }, [demoDashboardValueDrift, demoFastDriftEnabled]);
+
+  useEffect(() => {
+    const wasEnabled = previousAlertDemoEnabledRef.current;
+    previousAlertDemoEnabledRef.current = demoAlertEnabled;
+    if (!demoAlertEnabled || wasEnabled) {
+      return;
+    }
+    async function sendAlertDemoNotifications() {
+      if (
+        !Notifications?.getPermissionsAsync ||
+        !Notifications?.requestPermissionsAsync ||
+        !Notifications?.scheduleNotificationAsync ||
+        !Notifications?.SchedulableTriggerInputTypes
+      ) {
+        return;
+      }
+      try {
+        const permission = await Notifications.getPermissionsAsync();
+        if (!permission.granted) {
+          const asked = await Notifications.requestPermissionsAsync();
+          if (!asked.granted) {
+            return;
+          }
+        }
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'Abnormal Glucose',
+            body: 'Glucose at 192 mg/dL.',
+            sound: 'default',
+          },
+          trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 1, repeats: false },
+        });
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'Elevated Stress',
+            body: 'Stress index reached 84/100.',
+            sound: 'default',
+          },
+          trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 2, repeats: false },
+        });
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'Abnormal Heart Rate',
+            body: 'Resting heart rate at 104 bpm.',
+            sound: 'default',
+          },
+          trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 3, repeats: false },
+        });
+      } catch {
+        // Ignore notification failures in demo mode.
+      }
+    }
+    void sendAlertDemoNotifications();
+  }, [demoAlertEnabled]);
 
   useEffect(() => {
     if (activeTab !== 'Map') {
@@ -1538,6 +1846,7 @@ export default function App() {
                   );
                 })}
               </View>
+              <View style={styles.insightsQuickToThemesDivider} />
               <ScrollView
                 bounces={false}
                 overScrollMode="never"
@@ -1968,7 +2277,7 @@ export default function App() {
         <>
         <ScrollView bounces={false} contentContainerStyle={styles.content} overScrollMode="never" showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <View style={styles.alertBlock}>
+          <TouchableOpacity onPress={() => setShowAlertsScreen(true)} style={styles.alertBlock}>
             <View style={styles.alertIconWrap}>
               <Svg height={28} viewBox="0 0 48 32" width={40}>
                 <Path
@@ -1978,12 +2287,34 @@ export default function App() {
                   strokeWidth={2.2}
                 />
               </Svg>
-              <View style={styles.alertBadge}>
-                <Text style={styles.alertBadgeText}>2</Text>
-              </View>
+              {alertCount > 0 ? (
+                <Animated.View
+                  style={[
+                    styles.alertBadge,
+                    {
+                      transform: [
+                        {
+                          translateY: alertBadgeBounceAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, -10],
+                          }),
+                        },
+                        {
+                          scale: alertBadgeBounceAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [1, 1.22],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                >
+                  <Text style={styles.alertBadgeText}>{alertCount}</Text>
+                </Animated.View>
+              ) : null}
             </View>
-            <Text style={styles.alertText}>2 Alerts {'>'}</Text>
-          </View>
+            <Text style={styles.alertText}>{alertCount > 0 ? `${alertCount} Alerts` : 'No alerts'}</Text>
+          </TouchableOpacity>
           <View style={styles.headerLeft}>
             <TouchableOpacity onPress={() => setSidebarOpen(true)} style={styles.menuBtn}>
               <View style={styles.menuLine} />
@@ -2132,7 +2463,27 @@ export default function App() {
               </SvgText>
             </Svg>
           </View>
-          <Text style={styles.scoreHeart}>♥</Text>
+          <Animated.Text
+            style={[
+              styles.scoreHeart,
+              {
+                opacity: heartPulseAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.75, 1],
+                }),
+                transform: [
+                  {
+                    scale: heartPulseAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.96, 1.08],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            ♥
+          </Animated.Text>
           <Text style={styles.scoreLabel}>HEALTH SCORE</Text>
           <View style={styles.scoreRow}>
             <Text style={styles.score}>{displayScore}</Text>
@@ -2150,7 +2501,7 @@ export default function App() {
         </View>
 
         <View style={styles.grid}>
-          {METRICS.map((item) => (
+          {dashboardMetrics.map((item) => (
             <View key={item.label} style={styles.glassCard}>
               <Text style={styles.metricLabel}>{item.label}</Text>
               <View style={styles.metricValueRow}>
@@ -2197,7 +2548,7 @@ export default function App() {
         <View style={styles.quickRow}>
           {dashboardQuickMetrics.map((metric) => (
             <View key={metric} style={styles.quickItem}>
-              <View style={styles.quickIcon}>
+              <View style={[styles.quickIcon, { borderColor: QUICK_ACTION_THEME_COLOR_BY_TAB[metric] }]}>
                 <Text style={styles.quickIconGlyph}>{QUICK_ACTION_ICON_BY_TAB[metric]}</Text>
               </View>
               <Text numberOfLines={1} style={styles.quickText}>
@@ -2208,7 +2559,7 @@ export default function App() {
         </View>
 
         <View style={styles.activityContainer}>
-          {ACTIVITY.map((item, index) => (
+          {dashboardActivity.map((item, index) => (
             <View key={item.label} style={styles.activityItem}>
               <View style={styles.activityTopRow}>
                 <ActivityMiniIcon label={item.label} />
@@ -2221,7 +2572,7 @@ export default function App() {
                 <View style={[styles.activityFill, { flex: item.fill, backgroundColor: item.color }]} />
                 <View style={[styles.activityTrackRemainder, { flex: 100 - item.fill }]} />
               </View>
-              {index < ACTIVITY.length - 1 ? <View style={styles.activityDivider} /> : null}
+              {index < dashboardActivity.length - 1 ? <View style={styles.activityDivider} /> : null}
             </View>
           ))}
         </View>
@@ -2241,7 +2592,36 @@ export default function App() {
         </Svg>
         {NAV_ITEMS.map((item: { label: string; icon: string }) => (
           <TouchableOpacity key={item.label} onPress={() => setActiveTab(item.label)} style={styles.navItem}>
-            <Text style={[styles.navIcon, activeTab === item.label && styles.navActive]}>{item.icon}</Text>
+            {item.label === 'Dashboard' && alertCount > 0 ? (
+              <Animated.View
+                style={[
+                  styles.navAlertBadge,
+                  {
+                    transform: [
+                      {
+                        translateY: alertBadgeBounceAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0, -6],
+                        }),
+                      },
+                      {
+                        scale: alertBadgeBounceAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [1, 1.16],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <Text style={styles.navAlertBadgeText}>{alertCount}</Text>
+              </Animated.View>
+            ) : null}
+            {item.label === 'Insights' ? (
+              <InsightsBulbIcon active={activeTab === item.label} />
+            ) : (
+              <Text style={[styles.navIcon, activeTab === item.label && styles.navActive]}>{item.icon}</Text>
+            )}
             <Text style={[styles.navText, activeTab === item.label && styles.navActive]}>{item.label}</Text>
           </TouchableOpacity>
         ))}
@@ -2284,6 +2664,42 @@ export default function App() {
         </Pressable>
       </Modal>
 
+      <Modal
+        animationType="slide"
+        transparent
+        visible={showAlertsScreen}
+        onRequestClose={() => setShowAlertsScreen(false)}
+      >
+        <View style={styles.alertsModalBackdrop}>
+          <View style={styles.alertsModalCard}>
+            <View style={styles.alertsModalHeader}>
+              <TouchableOpacity onPress={() => setShowAlertsScreen(false)} style={styles.alertsBackBtn}>
+                <Text style={styles.alertsBackText}>{'<'}</Text>
+              </TouchableOpacity>
+              <View style={styles.alertsHeaderTextWrap}>
+                <Text style={styles.alertsTitle}>Alerts</Text>
+                <Text style={styles.alertsSubtitle}>Health notifications</Text>
+              </View>
+            </View>
+            {alertItems.length === 0 ? (
+              <View style={styles.alertsEmptyCard}>
+                <Text style={styles.alertsEmptyText}>No new alerts</Text>
+              </View>
+            ) : (
+              <ScrollView bounces={false} overScrollMode="never" showsVerticalScrollIndicator={false}>
+                {alertItems.map((alert) => (
+                  <View key={alert.id} style={styles.alertsCard}>
+                    <Text style={styles.alertsCardTitle}>{alert.title}</Text>
+                    <Text style={styles.alertsCardDetail}>{alert.detail}</Text>
+                    <Text style={styles.alertsCardSeverity}>{alert.severity}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
       {sidebarOpen ? (
         <View style={styles.sidebarOverlay}>
           <View style={styles.sidebarPanel}>
@@ -2296,40 +2712,111 @@ export default function App() {
             <TouchableOpacity style={styles.sidebarItem}>
               <Text style={styles.sidebarItemText}>Profile</Text>
             </TouchableOpacity>
-            <View style={styles.sidebarSection}>
-              <Text style={styles.sidebarSectionTitle}>Demo Tools</Text>
-              <TouchableOpacity onPress={() => setDemoScoreDriftEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
-                <Text style={styles.demoToggleLabel}>Live Health Score Drift</Text>
-                <View style={[styles.demoTogglePill, demoScoreDriftEnabled && styles.demoTogglePillActive]}>
-                  <Text style={[styles.demoTogglePillText, demoScoreDriftEnabled && styles.demoTogglePillTextActive]}>
-                    {demoScoreDriftEnabled ? 'ON' : 'OFF'}
+            <View style={styles.sidebarDivider} />
+            <Text style={styles.sidebarSectionTitle}>Demo Tools</Text>
+            <TouchableOpacity onPress={toggleAllDemoTools} style={styles.demoToggleRow}>
+              <Text style={styles.demoToggleLabel}>All Demo Tools</Text>
+              <View style={styles.demoToggleRowRight}>
+                <View style={[styles.demoTogglePill, allDemoToolsEnabled && styles.demoTogglePillActive]}>
+                  <Text style={[styles.demoTogglePillText, allDemoToolsEnabled && styles.demoTogglePillTextActive]}>
+                    {allDemoToolsEnabled ? 'ON' : 'OFF'}
                   </Text>
                 </View>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setDemoFastDriftEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
-                <Text style={styles.demoToggleLabel}>Fast Drift Mode</Text>
-                <View style={[styles.demoTogglePill, demoFastDriftEnabled && styles.demoTogglePillActive]}>
-                  <Text style={[styles.demoTogglePillText, demoFastDriftEnabled && styles.demoTogglePillTextActive]}>
-                    {demoFastDriftEnabled ? 'ON' : 'OFF'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setUseDeviceLocation((v: boolean) => !v)} style={styles.demoToggleRow}>
-                <Text style={styles.demoToggleLabel}>Use Device Location</Text>
-                <View style={[styles.demoTogglePill, useDeviceLocation && styles.demoTogglePillActive]}>
-                  <Text style={[styles.demoTogglePillText, useDeviceLocation && styles.demoTogglePillTextActive]}>
-                    {useDeviceLocation ? 'ON' : 'OFF'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-              <Text style={styles.demoHelperText}>
-                {locationStatus === 'granted'
-                  ? 'Location: granted'
-                  : locationStatus === 'denied'
-                    ? 'Location: denied (using fallback)'
-                    : ''}
-              </Text>
-            </View>
+                <TouchableOpacity
+                  onPress={(event) => {
+                    event.stopPropagation?.();
+                    setDemoToolsDropdownOpen((v) => !v);
+                  }}
+                  style={styles.demoDropdownBtn}
+                >
+                  <Text style={styles.demoDropdownText}>{demoToolsDropdownOpen ? '▾' : '▸'}</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setDemoFastDriftEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
+              <Text style={styles.demoToggleLabel}>Fast Drift Mode</Text>
+              <View style={[styles.demoTogglePill, demoFastDriftEnabled && styles.demoTogglePillActive]}>
+                <Text style={[styles.demoTogglePillText, demoFastDriftEnabled && styles.demoTogglePillTextActive]}>
+                  {demoFastDriftEnabled ? 'ON' : 'OFF'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setDemoAlertEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
+              <Text style={styles.demoToggleLabel}>Alert</Text>
+              <View style={[styles.demoTogglePill, demoAlertEnabled && styles.demoTogglePillActive]}>
+                <Text style={[styles.demoTogglePillText, demoAlertEnabled && styles.demoTogglePillTextActive]}>
+                  {demoAlertEnabled ? 'ON' : 'OFF'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+            {demoToolsDropdownOpen ? (
+              <View style={styles.demoDropdownList}>
+                <TouchableOpacity onPress={() => setDemoScoreDriftEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Live Health Score Drift</Text>
+                  <View style={[styles.demoTogglePill, demoScoreDriftEnabled && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoScoreDriftEnabled && styles.demoTogglePillTextActive]}>
+                      {demoScoreDriftEnabled ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('glucose')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Glucose Card Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.glucose && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.glucose && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.glucose ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('stress')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Stress Card Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.stress && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.stress && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.stress ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('heartRateCard')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Heart Rate Card Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.heartRateCard && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.heartRateCard && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.heartRateCard ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('steps')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Steps Activity Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.steps && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.steps && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.steps ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('sleep')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Sleep Activity Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.sleep && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.sleep && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.sleep ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('meds')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Meds Activity Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.meds && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.meds && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.meds ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('water')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Water Activity Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.water && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.water && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.water ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            ) : null}
           </View>
           <TouchableOpacity onPress={() => setSidebarOpen(false)} style={styles.sidebarScrim} />
         </View>
@@ -2493,7 +2980,13 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 6,
     marginTop: 6,
-    marginBottom: 6,
+    marginBottom: 16,
+  },
+  insightsQuickToThemesDivider: {
+    height: 1,
+    backgroundColor: 'rgba(148,163,184,0.28)',
+    width: '100%',
+    marginBottom: 10,
   },
   quickMetricOptionChip: {
     borderWidth: 1,
@@ -3451,7 +3944,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 30,
     left: '50%',
-    transform: [{ translateX: -24 }],
+    width: 92,
+    transform: [{ translateX: -46 }],
     alignItems: 'center',
   },
   alertIconWrap: {
@@ -3481,6 +3975,98 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     marginTop: 2,
+    textAlign: 'center',
+    width: '100%',
+  },
+  alertsModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(2,6,23,0.7)',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 36,
+  },
+  alertsModalCard: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: '#111827',
+    padding: 12,
+  },
+  alertsModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  alertsBackBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.26)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(15,23,42,0.7)',
+  },
+  alertsBackText: {
+    color: '#f8fafc',
+    fontSize: 15,
+    lineHeight: 15,
+    fontWeight: '800',
+  },
+  alertsHeaderTextWrap: {
+    flex: 1,
+  },
+  alertsTitle: {
+    color: '#f8fafc',
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  alertsSubtitle: {
+    color: '#94a3b8',
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  alertsEmptyCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.25)',
+    borderRadius: 12,
+    backgroundColor: 'rgba(15,23,42,0.45)',
+    paddingVertical: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  alertsEmptyText: {
+    color: '#cbd5e1',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  alertsCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.45)',
+    borderRadius: 12,
+    backgroundColor: 'rgba(127,29,29,0.22)',
+    padding: 12,
+    marginBottom: 10,
+  },
+  alertsCardTitle: {
+    color: '#fecaca',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  alertsCardDetail: {
+    color: '#e2e8f0',
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 4,
+  },
+  alertsCardSeverity: {
+    color: '#fca5a5',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 7,
   },
   weatherText: {
     color: '#fff',
@@ -3856,22 +4442,44 @@ const styles = StyleSheet.create({
   navItem: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2,
+    gap: 4,
+    position: 'relative',
   },
   navIcon: {
     color: '#52525b',
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: '700',
-    lineHeight: 22,
+    lineHeight: 26,
   },
   navText: {
     color: '#52525b',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
-    lineHeight: 11,
+    lineHeight: 13,
   },
   navActive: {
     color: '#3b82f6',
+  },
+  navAlertBadge: {
+    position: 'absolute',
+    top: -8,
+    right: 2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: '#dc2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#111827',
+    zIndex: 2,
+  },
+  navAlertBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+    lineHeight: 11,
   },
   sidebarOverlay: {
     position: 'absolute',
@@ -3898,8 +4506,8 @@ const styles = StyleSheet.create({
   },
   sidebarTitle: {
     color: '#f3f4f6',
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '800',
   },
   sidebarClose: {
     color: '#f3f4f6',
@@ -3907,17 +4515,20 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   sidebarItem: {
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    borderRadius: 10,
-    paddingVertical: 11,
-    paddingHorizontal: 12,
-    marginBottom: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 2,
+    marginBottom: 6,
   },
   sidebarItemText: {
     color: '#e5e7eb',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
+  },
+  sidebarDivider: {
+    height: 1,
+    backgroundColor: 'rgba(148,163,184,0.25)',
+    marginVertical: 8,
   },
   sidebarSection: {
     marginTop: 2,
@@ -3928,30 +4539,39 @@ const styles = StyleSheet.create({
   },
   sidebarSectionTitle: {
     color: '#e5e7eb',
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '800',
     marginBottom: 10,
+    textDecorationLine: 'underline',
   },
   demoToggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
+    minHeight: 52,
+    paddingVertical: 10,
+    marginBottom: 6,
+  },
+  demoToggleRowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   demoToggleLabel: {
     color: '#d1d5db',
-    fontSize: 12,
+    fontSize: 15,
     flex: 1,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   demoTogglePill: {
-    minWidth: 48,
+    minWidth: 66,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.24)',
     alignItems: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
     backgroundColor: 'rgba(255,255,255,0.08)',
   },
   demoTogglePillActive: {
@@ -3960,16 +4580,36 @@ const styles = StyleSheet.create({
   },
   demoTogglePillText: {
     color: '#e5e7eb',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
   },
   demoTogglePillTextActive: {
     color: '#93c5fd',
   },
+  demoDropdownBtn: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
+    backgroundColor: 'rgba(15,23,42,0.45)',
+  },
+  demoDropdownText: {
+    color: '#cbd5e1',
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 13,
+  },
+  demoDropdownList: {
+    marginTop: 2,
+    marginLeft: 10,
+  },
   demoHelperText: {
-    marginTop: 8,
+    marginTop: 10,
     color: '#9ca3af',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '500',
   },
 });
