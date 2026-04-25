@@ -1,6 +1,26 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Image, Keyboard, KeyboardAvoidingView, Linking, Modal, NativeModules, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Image,
+  Keyboard,
+  KeyboardAvoidingView,
+  Linking,
+  Modal,
+  NativeModules,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import Svg, { Circle, Defs, LinearGradient, Path, Stop, Text as SvgText } from 'react-native-svg';
 import * as Location from 'expo-location';
 import * as Contacts from 'expo-contacts';
@@ -204,6 +224,78 @@ const QUICK_ACTION_THEME_COLOR_BY_TAB: Record<InsightTab, string> = {
   'Blood Glucose': '#C7A77D',
 };
 
+function InsightsFavoriteSparkPage({
+  metric,
+  content,
+  pageWidth,
+  theme,
+  iconGlyph,
+}: {
+  metric: InsightTab;
+  content: InsightContent;
+  pageWidth: number;
+  theme: string;
+  iconGlyph: string;
+}) {
+  const points = content.trendPoints ?? [0, 0, 0, 0, 0, 0, 0];
+  const labels = content.trendLabels ?? ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  const chartWidth = Math.max(200, Math.floor(pageWidth));
+  const chartHeight = 96;
+  const graphPaddingX = 10;
+  const graphPaddingY = 12;
+  const max = Math.max(...points, 1);
+  const usableWidth = chartWidth - graphPaddingX * 2;
+  const usableHeight = chartHeight - graphPaddingY * 2;
+  const stepX = points.length > 1 ? usableWidth / (points.length - 1) : usableWidth;
+  const coords = points.map((value, idx) => {
+    const x = graphPaddingX + idx * stepX;
+    const y = graphPaddingY + (1 - value / max) * usableHeight;
+    return { x, y, value };
+  });
+  const pathD = coords.map((pt, idx) => `${idx === 0 ? 'M' : 'L'} ${pt.x} ${pt.y}`).join(' ');
+  const midY = graphPaddingY + usableHeight / 2;
+
+  return (
+    <View style={{ width: pageWidth, paddingVertical: 4 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+        <Text style={{ fontSize: 22, color: theme }}>{iconGlyph}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: '#93c5fd', fontSize: 10, fontWeight: '800', letterSpacing: 1 }}>FAVORITE</Text>
+          <Text style={{ color: '#f8fafc', fontSize: 16, fontWeight: '800', letterSpacing: -0.2 }}>{metric}</Text>
+        </View>
+        <Text style={{ color: '#94a3b8', fontSize: 11, fontWeight: '700' }}>{content.trendUnit}</Text>
+      </View>
+      <Svg height={chartHeight} viewBox={`0 0 ${chartWidth} ${chartHeight}`} width="100%">
+        <Path
+          d={`M ${graphPaddingX} ${chartHeight - graphPaddingY} L ${chartWidth - graphPaddingX} ${chartHeight - graphPaddingY}`}
+          stroke="rgba(148,163,184,0.16)"
+          strokeWidth={1}
+        />
+        <Path
+          d={`M ${graphPaddingX} ${midY} L ${chartWidth - graphPaddingX} ${midY}`}
+          stroke="rgba(148,163,184,0.1)"
+          strokeDasharray="4 6"
+          strokeWidth={1}
+        />
+        <Path d={pathD} fill="none" stroke={theme} strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} />
+        {coords.map((pt, idx) => (
+          <Circle key={`${metric}-spark-${idx}`} cx={pt.x} cy={pt.y} fill="#0f172a" r={3.2} stroke={theme} strokeWidth={1.8} />
+        ))}
+      </Svg>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
+        {labels.map((label, idx) => (
+          <View key={`${metric}-spark-lbl-${idx}`} style={{ flex: 1, alignItems: 'center' }}>
+            <Text style={{ color: '#e2e8f0', fontSize: 10, fontWeight: '800' }}>
+              {points[idx] > 0 ? String(points[idx].toFixed(1)).replace(/\.0$/, '') : '0'}
+            </Text>
+            <Text style={{ color: '#64748b', fontSize: 9, fontWeight: '700', marginTop: 2 }}>{label}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 const ACTIVITY = [
   { label: 'STEPS', value: '6,842', fill: 85, color: '#22c55e' },
   { label: 'SLEEP', value: '7h 15m', fill: 95, color: '#22c55e' },
@@ -369,17 +461,12 @@ const FIREBASE_CONFIG = {
 const hasFirebaseConfig = Object.values(FIREBASE_CONFIG).every((value) => value.trim().length > 0);
 const hasCloudinaryConfig = CLOUDINARY_CLOUD_NAME.trim().length > 0 && CLOUDINARY_UPLOAD_PRESET.trim().length > 0;
 
-let firestoreInstance: Firestore | null = null;
 const getFirestoreInstance = (): Firestore | null => {
   if (!hasFirebaseConfig) {
     return null;
   }
-  if (firestoreInstance) {
-    return firestoreInstance;
-  }
   const app = getApps().length > 0 ? getApp() : initializeApp(FIREBASE_CONFIG);
-  firestoreInstance = getFirestore(app);
-  return firestoreInstance;
+  return getFirestore(app);
 };
 
 const cloudinaryUploadEndpoint = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
@@ -709,7 +796,12 @@ function InsightsBulbIcon({ active }: { active: boolean }) {
 }
 
 export default function App() {
+  const { width: windowWidth } = useWindowDimensions();
+  const starredGalleryPageWidth = Math.max(0, windowWidth - 32);
   const mapViewRef = useRef<MapView | null>(null);
+  const starredGalleryScrollRef = useRef<ScrollView | null>(null);
+  const starredGalleryNextScrollAnimatedRef = useRef(false);
+  const starredGallerySuppressAutoUntilRef = useRef(0);
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [healthScore, setHealthScore] = useState(72);
@@ -744,8 +836,9 @@ export default function App() {
     QUICK_ACTION_METRIC_OPTIONS.slice(0, DASHBOARD_QUICK_ACTION_SLOTS),
   );
   const [quickMetricSearchQuery, setQuickMetricSearchQuery] = useState('');
+  const [starredGalleryIndex, setStarredGalleryIndex] = useState(0);
   const [expandedInsightGroups, setExpandedInsightGroups] = useState<Record<string, boolean>>(
-    () => INSIGHT_GROUPS.reduce((acc, group) => ({ ...acc, [group.id]: true }), {}),
+    () => INSIGHT_GROUPS.reduce((acc, group) => ({ ...acc, [group.id]: false }), {}),
   );
   const [insightContentByTab, setInsightContentByTab] = useState<Record<InsightTab, InsightContent>>(INSIGHTS_TAB_CONTENT);
   const [healthKitStatus, setHealthKitStatus] = useState<'idle' | 'ready' | 'denied' | 'unsupported'>('idle');
@@ -1217,9 +1310,9 @@ export default function App() {
             communityId: toShareSlug(communityName),
           })
         : null;
-      const firestore = getFirestoreInstance();
-      if (firestore) {
-        await addDoc(collection(firestore, 'progress_posts'), {
+      const db = getFirestoreInstance();
+      if (db) {
+        await addDoc(collection(db, 'progress_posts'), {
           communityId: toShareSlug(communityName),
           communityName,
           authorId: 'demo-user',
@@ -2309,6 +2402,42 @@ export default function App() {
     }
   }, [selectedJoinedCommunityName]);
 
+  useEffect(() => {
+    if (dashboardQuickMetrics.length === 0) {
+      setStarredGalleryIndex(0);
+      return;
+    }
+    setStarredGalleryIndex((i) => Math.min(i, dashboardQuickMetrics.length - 1));
+  }, [dashboardQuickMetrics]);
+
+  useLayoutEffect(() => {
+    if (dashboardQuickMetrics.length === 0 || starredGalleryPageWidth <= 0) {
+      return;
+    }
+    const x = starredGalleryIndex * starredGalleryPageWidth;
+    const animated = starredGalleryNextScrollAnimatedRef.current;
+    starredGalleryNextScrollAnimatedRef.current = false;
+    starredGalleryScrollRef.current?.scrollTo({ x, animated });
+  }, [dashboardQuickMetrics, starredGalleryIndex, starredGalleryPageWidth]);
+
+  useEffect(() => {
+    if (activeTab !== 'Insights' || activeInsightTab !== null) {
+      return;
+    }
+    if (dashboardQuickMetrics.length <= 1) {
+      return;
+    }
+    const intervalMs = 9000;
+    const id = setInterval(() => {
+      if (Date.now() < starredGallerySuppressAutoUntilRef.current) {
+        return;
+      }
+      starredGalleryNextScrollAnimatedRef.current = true;
+      setStarredGalleryIndex((i) => (i + 1) % dashboardQuickMetrics.length);
+    }, intervalMs);
+    return () => clearInterval(id);
+  }, [activeTab, activeInsightTab, dashboardQuickMetrics]);
+
   return (
     <View style={styles.container}>
       <View style={styles.gridOverlay} />
@@ -2386,19 +2515,29 @@ export default function App() {
           {activeInsightTab == null ? (
             <>
               <Text style={styles.insightsTitle}>Insights</Text>
-              <Text style={styles.insightsStatusText}>
-                {Platform.OS !== 'ios'
-                  ? 'Apple Health is available on iOS only.'
-                  : healthKitLoading
-                    ? 'Connecting to Apple Health...'
-                  : healthKitStatus === 'ready'
-                    ? 'Connected to Apple Health.'
-                    : healthKitStatus === 'denied'
-                      ? 'Apple Health permission denied.'
-                      : healthKitStatus === 'unsupported'
-                        ? 'Apple Health unavailable in this build.'
-                        : 'Requesting Apple Health access...'}
-              </Text>
+              <View style={styles.insightsStatusRow}>
+                {Platform.OS === 'ios' && healthKitLoading ? (
+                  <ActivityIndicator accessibilityLabel="Connecting to Apple Health" color="#93c5fd" size="small" />
+                ) : null}
+                <Text
+                  style={[
+                    styles.insightsHealthTagline,
+                    healthKitStatus === 'ready' && Platform.OS === 'ios' && styles.insightsHealthTaglineConnected,
+                  ]}
+                >
+                  {Platform.OS !== 'ios'
+                    ? 'Apple Health is available on iOS only.'
+                    : healthKitLoading
+                      ? 'Connecting to Apple Health...'
+                      : healthKitStatus === 'ready'
+                        ? 'Connected to Apple Health.'
+                        : healthKitStatus === 'denied'
+                          ? 'Apple Health permission denied.'
+                          : healthKitStatus === 'unsupported'
+                            ? 'Apple Health unavailable in this build.'
+                            : 'Requesting Apple Health access...'}
+                </Text>
+              </View>
               {Platform.OS === 'ios' && healthKitStatus !== 'ready' ? (
                 <TouchableOpacity
                   disabled={healthKitLoading}
@@ -2412,28 +2551,98 @@ export default function App() {
                 </TouchableOpacity>
               ) : null}
               {healthKitLastError ? <Text style={styles.healthErrorText}>{healthKitLastError}</Text> : null}
-              <TextInput
-                onChangeText={setQuickMetricSearchQuery}
-                placeholder="Search and star metrics for Dashboard quick actions"
-                placeholderTextColor="#64748b"
-                style={styles.quickMetricSearchInput}
-                value={quickMetricSearchQuery}
-              />
-              <View style={styles.quickMetricSearchResults}>
-                {filteredQuickMetricOptions.slice(0, 6).map((metric) => {
-                  const isSelected = dashboardQuickMetrics.includes(metric);
-                  return (
-                    <TouchableOpacity
-                      key={`search-${metric}`}
-                      onPress={() => toggleDashboardQuickMetric(metric)}
-                      style={[styles.quickMetricOptionChip, isSelected && styles.quickMetricOptionChipActive]}
+              <View style={styles.insightsStarredGalleryWrap}>
+                {dashboardQuickMetrics.length === 0 ? (
+                  <Text style={styles.insightsStarredGalleryEmptyText}>
+                    Star metrics with ☆ below — your favorites appear here as swipeable charts.
+                  </Text>
+                ) : (
+                  <>
+                    <ScrollView
+                      ref={starredGalleryScrollRef}
+                      decelerationRate="fast"
+                      horizontal
+                      keyboardShouldPersistTaps="handled"
+                      onMomentumScrollEnd={(e) => {
+                        const w = starredGalleryPageWidth;
+                        if (w <= 0) {
+                          return;
+                        }
+                        const idx = Math.round(e.nativeEvent.contentOffset.x / w);
+                        const clamped = Math.max(0, Math.min(idx, dashboardQuickMetrics.length - 1));
+                        setStarredGalleryIndex(clamped);
+                      }}
+                      onScrollBeginDrag={() => {
+                        starredGallerySuppressAutoUntilRef.current = Date.now() + 12000;
+                      }}
+                      pagingEnabled
+                      showsHorizontalScrollIndicator={false}
                     >
-                      <Text style={[styles.quickMetricOptionText, isSelected && styles.quickMetricOptionTextActive]}>
-                        {isSelected ? '★' : '☆'} {metric}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+                      {dashboardQuickMetrics.map((metric) => {
+                        const content = insightContentByTab[metric];
+                        const w = starredGalleryPageWidth;
+                        if (!content || w <= 0) {
+                          return <View key={`starred-gallery-page-${metric}`} style={{ width: w }} />;
+                        }
+                        return (
+                          <View key={`starred-gallery-page-${metric}`} style={{ width: w }}>
+                            <InsightsFavoriteSparkPage
+                              content={content}
+                              iconGlyph={QUICK_ACTION_ICON_BY_TAB[metric]}
+                              metric={metric}
+                              pageWidth={w}
+                              theme={QUICK_ACTION_THEME_COLOR_BY_TAB[metric]}
+                            />
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                    <View style={styles.insightsStarredGalleryDots}>
+                      {dashboardQuickMetrics.map((m, idx) => (
+                        <TouchableOpacity
+                          key={`starred-gallery-dot-${m}-${idx}`}
+                          accessibilityLabel={`Show ${m}`}
+                          hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                          onPress={() => {
+                            starredGallerySuppressAutoUntilRef.current = Date.now() + 12000;
+                            setStarredGalleryIndex(idx);
+                          }}
+                          style={[
+                            styles.insightsStarredGalleryDot,
+                            idx === starredGalleryIndex && styles.insightsStarredGalleryDotActive,
+                            { backgroundColor: idx === starredGalleryIndex ? QUICK_ACTION_THEME_COLOR_BY_TAB[m] : 'rgba(148,163,184,0.35)' },
+                          ]}
+                        />
+                      ))}
+                    </View>
+                  </>
+                )}
+              </View>
+              <Text style={styles.insightsSectionLabel}>Dashboard quick actions</Text>
+              <View style={styles.insightsSearchPanel}>
+                <TextInput
+                  onChangeText={setQuickMetricSearchQuery}
+                  placeholder="Search metrics to star…"
+                  placeholderTextColor="#64748b"
+                  style={styles.quickMetricSearchInput}
+                  value={quickMetricSearchQuery}
+                />
+                <View style={styles.quickMetricSearchResults}>
+                  {filteredQuickMetricOptions.slice(0, 6).map((metric) => {
+                    const isSelected = dashboardQuickMetrics.includes(metric);
+                    return (
+                      <TouchableOpacity
+                        key={`search-${metric}`}
+                        onPress={() => toggleDashboardQuickMetric(metric)}
+                        style={[styles.quickMetricOptionChip, isSelected && styles.quickMetricOptionChipActive]}
+                      >
+                        <Text style={[styles.quickMetricOptionText, isSelected && styles.quickMetricOptionTextActive]}>
+                          {isSelected ? '★' : '☆'} {metric}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
               </View>
               <View style={styles.insightsQuickToThemesDivider} />
               <ScrollView
@@ -2444,7 +2653,7 @@ export default function App() {
               >
                 <View style={styles.insightsTabStack}>
                   {INSIGHT_GROUPS.map((group) => {
-                    const isExpanded = expandedInsightGroups[group.id] ?? true;
+                    const isExpanded = expandedInsightGroups[group.id] ?? false;
                     return (
                       <View key={group.id} style={styles.insightsGroupCard}>
                         <View style={[styles.insightsGroupBand, { backgroundColor: group.color }]} />
@@ -2497,19 +2706,28 @@ export default function App() {
                 </TouchableOpacity>
                 <View style={styles.insightsDetailHeaderText}>
                   <Text style={styles.insightsTitle}>{activeInsightTab}</Text>
-                  <Text style={styles.insightsDetailSubtitle}>Dedicated insight screen</Text>
+                  <Text style={styles.insightsDetailSubtitle}>Dedicated insight view</Text>
                 </View>
               </View>
               {selectedInsightContent ? (
-                <>
+                <ScrollView
+                  bounces={false}
+                  contentContainerStyle={styles.insightsDetailScrollContent}
+                  overScrollMode="never"
+                  showsVerticalScrollIndicator={false}
+                  style={styles.insightsDetailScroll}
+                >
                   <View style={styles.insightsCard}>
+                    <Text style={styles.insightsCardEyebrow}>Overview</Text>
                     <Text style={styles.insightsCardTitle}>{selectedInsightContent.title}</Text>
                     <Text style={styles.insightsCardSummary}>{selectedInsightContent.summary}</Text>
-                    <Text style={styles.insightsCardTrend}>{selectedInsightContent.trend}</Text>
+                    <View style={styles.insightsTrendPill}>
+                      <Text style={styles.insightsCardTrend}>{selectedInsightContent.trend}</Text>
+                    </View>
                   </View>
                   <View style={styles.insightsCard}>
                     <View style={styles.insightsChartHeader}>
-                      <Text style={styles.insightsCardSection}>7-Day Trend</Text>
+                      <Text style={styles.insightsCardSection}>7-day trend</Text>
                       <Text style={styles.insightsChartUnit}>Unit: {selectedInsightContent.trendUnit}</Text>
                     </View>
                     <View style={styles.insightsLineChartWrap}>
@@ -2530,12 +2748,14 @@ export default function App() {
                           return { x, y, value };
                         });
                         const pathD = coords.map((pt, idx) => `${idx === 0 ? 'M' : 'L'} ${pt.x} ${pt.y}`).join(' ');
+                        const midY = graphPaddingY + usableHeight / 2;
 
                         return (
                           <>
                             <Svg height={chartHeight} viewBox={`0 0 ${chartWidth} ${chartHeight}`} width="100%">
-                              <Path d={`M ${graphPaddingX} ${chartHeight - graphPaddingY} L ${chartWidth - graphPaddingX} ${chartHeight - graphPaddingY}`} stroke="rgba(148,163,184,0.25)" strokeWidth={1.2} />
-                              <Path d={pathD} fill="none" stroke="#38bdf8" strokeWidth={2.6} />
+                              <Path d={`M ${graphPaddingX} ${chartHeight - graphPaddingY} L ${chartWidth - graphPaddingX} ${chartHeight - graphPaddingY}`} stroke="rgba(148,163,184,0.22)" strokeWidth={1} />
+                              <Path d={`M ${graphPaddingX} ${midY} L ${chartWidth - graphPaddingX} ${midY}`} stroke="rgba(148,163,184,0.12)" strokeDasharray="4 6" strokeWidth={1} />
+                              <Path d={pathD} fill="none" stroke="#38bdf8" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.6} />
                               {coords.map((pt, idx) => (
                                 <Circle
                                   key={`${selectedInsightContent.title}-dot-${idx}`}
@@ -2562,10 +2782,10 @@ export default function App() {
                     </View>
                   </View>
                   <View style={styles.insightsCard}>
-                    <Text style={styles.insightsCardSection}>Recommendation</Text>
+                    <Text style={styles.insightsCardEyebrow}>Next steps</Text>
                     <Text style={styles.insightsCardSummary}>{selectedInsightContent.recommendation}</Text>
                   </View>
-                </>
+                </ScrollView>
               ) : null}
             </View>
           )}
@@ -3618,21 +3838,79 @@ const styles = StyleSheet.create({
   insightsScreen: {
     flex: 1,
     paddingTop: 54,
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     paddingBottom: 78,
     backgroundColor: '#111827',
   },
   insightsTitle: {
     color: '#f8fafc',
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: -0.3,
   },
-  insightsStatusText: {
+  insightsStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 8,
+  },
+  insightsHealthTagline: {
+    flex: 1,
+    color: '#94a3b8',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  insightsHealthTaglineConnected: {
+    color: '#86efac',
+  },
+  insightsStarredGalleryWrap: {
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  insightsStarredGalleryEmptyText: {
     color: '#94a3b8',
     fontSize: 13,
-    marginTop: 4,
-    marginBottom: 4,
+    lineHeight: 19,
     fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  insightsStarredGalleryDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+  },
+  insightsStarredGalleryDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  insightsStarredGalleryDotActive: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  insightsSectionLabel: {
+    marginTop: 18,
+    marginBottom: 8,
+    color: '#e2e8f0',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+  },
+  insightsSearchPanel: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(2,6,23,0.45)',
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
   },
   healthConnectBtn: {
     alignSelf: 'flex-start',
@@ -3642,7 +3920,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 9,
-    marginBottom: 6,
+    marginTop: 10,
   },
   healthConnectBtnDisabled: {
     opacity: 0.55,
@@ -3656,33 +3934,32 @@ const styles = StyleSheet.create({
     color: '#fca5a5',
     fontSize: 12,
     lineHeight: 17,
-    marginBottom: 6,
+    marginTop: 8,
     fontWeight: '600',
   },
   quickMetricSearchInput: {
     borderWidth: 1,
-    borderColor: 'rgba(148,163,184,0.4)',
-    backgroundColor: 'rgba(2,6,23,0.55)',
-    borderRadius: 10,
+    borderColor: 'rgba(148,163,184,0.35)',
+    backgroundColor: 'rgba(15,23,42,0.55)',
+    borderRadius: 12,
     color: '#e2e8f0',
-    paddingHorizontal: 11,
-    paddingVertical: 9,
-    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     fontSize: 13,
     fontWeight: '600',
   },
   quickMetricSearchResults: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 6,
-    marginBottom: 16,
+    gap: 8,
+    marginTop: 10,
   },
   insightsQuickToThemesDivider: {
     height: 1,
-    backgroundColor: 'rgba(148,163,184,0.28)',
+    backgroundColor: 'rgba(148,163,184,0.22)',
     width: '100%',
-    marginBottom: 10,
+    marginTop: 16,
+    marginBottom: 12,
   },
   quickMetricOptionChip: {
     borderWidth: 1,
@@ -3826,8 +4103,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(59,130,246,0.2)',
   },
   insightsTabText: {
-    color: '#9ca3af',
-    fontSize: 18,
+    color: '#cbd5e1',
+    fontSize: 17,
     fontWeight: '700',
   },
   insightsTabTextActive: {
@@ -3835,16 +4112,25 @@ const styles = StyleSheet.create({
   },
   insightsCard: {
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    borderRadius: 14,
-    padding: 14,
-    backgroundColor: 'rgba(15,23,42,0.4)',
-    marginBottom: 10,
+    borderColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 16,
+    padding: 16,
+    backgroundColor: 'rgba(15,23,42,0.52)',
+    marginBottom: 12,
+  },
+  insightsCardEyebrow: {
+    color: '#93c5fd',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginBottom: 6,
   },
   insightsCardTitle: {
     color: '#f8fafc',
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: -0.2,
   },
   insightsCardSection: {
     color: '#93c5fd',
@@ -3854,15 +4140,24 @@ const styles = StyleSheet.create({
   },
   insightsCardSummary: {
     color: '#cbd5e1',
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 4,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 8,
+  },
+  insightsTrendPill: {
+    alignSelf: 'flex-start',
+    marginTop: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.35)',
+    backgroundColor: 'rgba(34,197,94,0.12)',
   },
   insightsCardTrend: {
-    color: '#86efac',
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 10,
+    color: '#bbf7d0',
+    fontSize: 12,
+    fontWeight: '800',
   },
   insightsChartHeader: {
     flexDirection: 'row',
@@ -3889,13 +4184,14 @@ const styles = StyleSheet.create({
   },
   insightsChartValue: {
     color: '#e2e8f0',
-    fontSize: 9,
-    fontWeight: '700',
+    fontSize: 10,
+    fontWeight: '800',
   },
   insightsChartLabel: {
     color: '#94a3b8',
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '700',
+    marginTop: 2,
   },
   insightsPromptCard: {
     borderWidth: 1,
@@ -3913,10 +4209,16 @@ const styles = StyleSheet.create({
   insightsDetailScreen: {
     flex: 1,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    borderRadius: 14,
+    borderColor: 'rgba(255,255,255,0.14)',
+    borderRadius: 18,
     padding: 14,
-    backgroundColor: 'rgba(15,23,42,0.4)',
+    backgroundColor: 'rgba(15,23,42,0.5)',
+  },
+  insightsDetailScroll: {
+    flex: 1,
+  },
+  insightsDetailScrollContent: {
+    paddingBottom: 18,
   },
   insightsDetailHeader: {
     flexDirection: 'row',
@@ -3944,8 +4246,8 @@ const styles = StyleSheet.create({
   },
   insightsDetailSubtitle: {
     color: '#94a3b8',
-    fontSize: 11,
-    marginTop: 2,
+    fontSize: 12,
+    marginTop: 4,
     fontWeight: '600',
   },
   goalsScreen: {
