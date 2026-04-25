@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -10,6 +10,8 @@ import {
   Linking,
   Modal,
   NativeModules,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
@@ -21,6 +23,8 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Reanimated, { runOnJS, type SharedValue, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import Svg, { Circle, Defs, LinearGradient, Path, Stop, Text as SvgText } from 'react-native-svg';
 import * as Location from 'expo-location';
 import * as Contacts from 'expo-contacts';
@@ -153,14 +157,15 @@ const INSIGHTS_TAB_CONTENT: Record<InsightTab, InsightContent> = INSIGHTS_TABS.r
 }, {} as Record<InsightTab, InsightContent>);
 
 const QUICK_ACTION_METRIC_OPTIONS: InsightTab[] = [
-  'Heart Rate',
+  'Walking + Running Distance',
   'Steps',
   'Sleep',
   'Active Energy',
-  'Mindfulness',
+  'Flights Climbed',
   'Blood Glucose',
+  'Heart Rate',
+  'Mindfulness',
   'Resting Heart Rate',
-  'Walking + Running Distance',
   'Exercise Time',
   'Blood Oxygen',
 ];
@@ -292,6 +297,193 @@ function InsightsFavoriteSparkPage({
           </View>
         ))}
       </View>
+    </View>
+  );
+}
+
+function moveDashboardQuickMetric(list: InsightTab[], from: number, to: number): InsightTab[] {
+  if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) {
+    return list;
+  }
+  const next = [...list];
+  const [removed] = next.splice(from, 1);
+  next.splice(to, 0, removed);
+  return next;
+}
+
+type DashboardQuickActionSlotProps = {
+  metric: InsightTab;
+  index: number;
+  slotWidth: number;
+  draggingIndexSV: SharedValue<number>;
+  dragTranslationSV: SharedValue<number>;
+  slotWidthSV: SharedValue<number>;
+  onPress: () => void;
+  onDragCommit: (fromIndex: number, translationX: number) => void;
+};
+
+function DashboardQuickActionSlot({
+  metric,
+  index,
+  slotWidth,
+  draggingIndexSV,
+  dragTranslationSV,
+  slotWidthSV,
+  onPress,
+  onDragCommit,
+}: DashboardQuickActionSlotProps) {
+  const onPressJS = useCallback(() => {
+    onPress();
+  }, [onPress]);
+
+  const commitJS = useCallback(
+    (fromIdx: number, dx: number) => {
+      if (slotWidth <= 0) {
+        return;
+      }
+      onDragCommit(fromIdx, dx);
+    },
+    [slotWidth, onDragCommit],
+  );
+
+  const gesture = useMemo(() => {
+    const tap = Gesture.Tap()
+      .maxDuration(380)
+      .onEnd((_e, success) => {
+        'worklet';
+        if (success) {
+          runOnJS(onPressJS)();
+        }
+      });
+
+    const pan = Gesture.Pan()
+      .activateAfterLongPress(450)
+      .onStart(() => {
+        draggingIndexSV.value = index;
+      })
+      .onUpdate((e) => {
+        dragTranslationSV.value = e.translationX;
+      })
+      .onEnd((e, success) => {
+        if (success) {
+          runOnJS(commitJS)(index, e.translationX);
+        }
+      })
+      .onFinalize(() => {
+        draggingIndexSV.value = -1;
+        dragTranslationSV.value = 0;
+      });
+
+    return Gesture.Exclusive(tap, pan);
+  }, [commitJS, dragTranslationSV, draggingIndexSV, index, onPressJS]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    const from = draggingIndexSV.value;
+    const dx = dragTranslationSV.value;
+    const w = slotWidthSV.value;
+    if (from < 0 || w <= 0) {
+      return { transform: [{ translateX: 0 }, { scale: 1 }], zIndex: 0 };
+    }
+    const t = dx / w;
+    let translate = 0;
+    let z = 0;
+    let scale = 1;
+    if (index === from) {
+      translate = dx;
+      z = 8;
+      scale = 1.06;
+    } else if (t > 0) {
+      const k = index - from;
+      if (k >= 1) {
+        const step = Math.min(Math.max(t - (k - 1), 0), 1);
+        translate = -step * w;
+      }
+    } else if (t < 0) {
+      const k = from - index;
+      if (k >= 1) {
+        const u = -t;
+        const step = Math.min(Math.max(u - (k - 1), 0), 1);
+        translate = step * w;
+      }
+    }
+    return {
+      transform: [{ translateX: translate }, { scale }],
+      zIndex: z,
+    };
+  }, [dragTranslationSV, draggingIndexSV, index, slotWidthSV]);
+
+  return (
+    <GestureDetector gesture={gesture}>
+      <Reanimated.View
+        accessibilityHint="Long press, then drag sideways to reorder. Tap to open in Insights."
+        accessibilityLabel={`Quick action ${metric}`}
+        accessibilityRole="button"
+        style={[styles.quickItem, animatedStyle]}
+      >
+        <View style={[styles.quickIcon, { borderColor: QUICK_ACTION_THEME_COLOR_BY_TAB[metric] }]}>
+          <Text style={styles.quickIconGlyph}>{QUICK_ACTION_ICON_BY_TAB[metric]}</Text>
+        </View>
+        <Text numberOfLines={1} style={styles.quickText}>
+          {metric}
+        </Text>
+      </Reanimated.View>
+    </GestureDetector>
+  );
+}
+
+type DashboardQuickActionMetricsRowProps = {
+  metrics: InsightTab[];
+  onReorder: (next: InsightTab[]) => void;
+  onMetricPress: (metric: InsightTab) => void;
+};
+
+function DashboardQuickActionMetricsRow({ metrics, onReorder, onMetricPress }: DashboardQuickActionMetricsRowProps) {
+  const [slotWidth, setSlotWidth] = useState(0);
+  const slotWidthSV = useSharedValue(0);
+  const draggingIndexSV = useSharedValue(-1);
+  const dragTranslationSV = useSharedValue(0);
+  const metricsRef = useRef(metrics);
+  metricsRef.current = metrics;
+
+  const handleDragCommit = useCallback(
+    (fromIndex: number, translationX: number) => {
+      const list = metricsRef.current;
+      const w = slotWidth;
+      if (w <= 0 || list.length === 0) {
+        return;
+      }
+      const delta = Math.round(translationX / w);
+      const toIndex = Math.max(0, Math.min(fromIndex + delta, list.length - 1));
+      if (toIndex !== fromIndex) {
+        onReorder(moveDashboardQuickMetric(list, fromIndex, toIndex));
+      }
+    },
+    [slotWidth, onReorder],
+  );
+
+  return (
+    <View
+      onLayout={(e) => {
+        const w = e.nativeEvent.layout.width;
+        const sw = metrics.length > 0 ? w / metrics.length : 0;
+        setSlotWidth(sw);
+        slotWidthSV.value = sw;
+      }}
+      style={styles.quickRow}
+    >
+      {metrics.map((metric, index) => (
+        <DashboardQuickActionSlot
+          key={metric}
+          dragTranslationSV={dragTranslationSV}
+          draggingIndexSV={draggingIndexSV}
+          index={index}
+          metric={metric}
+          onDragCommit={handleDragCommit}
+          onPress={() => onMetricPress(metric)}
+          slotWidth={slotWidth}
+          slotWidthSV={slotWidthSV}
+        />
+      ))}
     </View>
   );
 }
@@ -802,6 +994,8 @@ export default function App() {
   const starredGalleryScrollRef = useRef<ScrollView | null>(null);
   const starredGalleryNextScrollAnimatedRef = useRef(false);
   const starredGallerySuppressAutoUntilRef = useRef(0);
+  /** When true, skip programmatic gallery scrollTo so user-driven scroll can update dots without fighting layout. */
+  const suppressStarredGalleryLayoutScrollRef = useRef(false);
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [healthScore, setHealthScore] = useState(72);
@@ -837,6 +1031,78 @@ export default function App() {
   );
   const [quickMetricSearchQuery, setQuickMetricSearchQuery] = useState('');
   const [starredGalleryIndex, setStarredGalleryIndex] = useState(0);
+
+  const insightsGalleryScrollPages = useMemo(() => {
+    const m = dashboardQuickMetrics;
+    const n = m.length;
+    if (n === 0) {
+      return [] as { metric: InsightTab; pageKey: string }[];
+    }
+    if (n === 1) {
+      return [{ metric: m[0]!, pageKey: 'gallery-solo' }];
+    }
+    return [
+      { metric: m[n - 1]!, pageKey: 'gallery-clone-before' },
+      ...m.map((metric) => ({ metric, pageKey: `gallery-slot-${metric}` })),
+      { metric: m[0]!, pageKey: 'gallery-clone-after' },
+    ];
+  }, [dashboardQuickMetrics]);
+
+  const onInsightsGalleryScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const w = starredGalleryPageWidth;
+      if (w <= 0) {
+        return;
+      }
+      const n = dashboardQuickMetrics.length;
+      if (n <= 1) {
+        setStarredGalleryIndex(0);
+        return;
+      }
+      const rel = e.nativeEvent.contentOffset.x / w;
+      let k = Math.round(rel) - 1;
+      if (k < 0) {
+        k = n - 1;
+      } else if (k >= n) {
+        k = 0;
+      }
+      setStarredGalleryIndex((prev) => (prev === k ? prev : k));
+    },
+    [dashboardQuickMetrics.length, starredGalleryPageWidth],
+  );
+
+  const onInsightsGalleryMomentumEnd = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      suppressStarredGalleryLayoutScrollRef.current = false;
+      const w = starredGalleryPageWidth;
+      if (w <= 0) {
+        return;
+      }
+      const n = dashboardQuickMetrics.length;
+      if (n <= 1) {
+        setStarredGalleryIndex(0);
+        return;
+      }
+      const p = Math.round(e.nativeEvent.contentOffset.x / w);
+      if (p === 0) {
+        setStarredGalleryIndex(n - 1);
+        requestAnimationFrame(() => {
+          starredGalleryScrollRef.current?.scrollTo({ x: n * w, animated: false });
+        });
+        return;
+      }
+      if (p === n + 1) {
+        setStarredGalleryIndex(0);
+        requestAnimationFrame(() => {
+          starredGalleryScrollRef.current?.scrollTo({ x: w, animated: false });
+        });
+        return;
+      }
+      setStarredGalleryIndex(p - 1);
+    },
+    [dashboardQuickMetrics.length, starredGalleryPageWidth],
+  );
+
   const [expandedInsightGroups, setExpandedInsightGroups] = useState<Record<string, boolean>>(
     () => INSIGHT_GROUPS.reduce((acc, group) => ({ ...acc, [group.id]: false }), {}),
   );
@@ -2403,6 +2669,7 @@ export default function App() {
   }, [selectedJoinedCommunityName]);
 
   useEffect(() => {
+    suppressStarredGalleryLayoutScrollRef.current = false;
     if (dashboardQuickMetrics.length === 0) {
       setStarredGalleryIndex(0);
       return;
@@ -2414,7 +2681,13 @@ export default function App() {
     if (dashboardQuickMetrics.length === 0 || starredGalleryPageWidth <= 0) {
       return;
     }
-    const x = starredGalleryIndex * starredGalleryPageWidth;
+    if (suppressStarredGalleryLayoutScrollRef.current) {
+      return;
+    }
+    const n = dashboardQuickMetrics.length;
+    const w = starredGalleryPageWidth;
+    const loop = n > 1;
+    const x = loop ? (starredGalleryIndex + 1) * w : starredGalleryIndex * w;
     const animated = starredGalleryNextScrollAnimatedRef.current;
     starredGalleryNextScrollAnimatedRef.current = false;
     starredGalleryScrollRef.current?.scrollTo({ x, animated });
@@ -2433,6 +2706,7 @@ export default function App() {
         return;
       }
       starredGalleryNextScrollAnimatedRef.current = true;
+      suppressStarredGalleryLayoutScrollRef.current = false;
       setStarredGalleryIndex((i) => (i + 1) % dashboardQuickMetrics.length);
     }, intervalMs);
     return () => clearInterval(id);
@@ -2563,29 +2837,24 @@ export default function App() {
                       decelerationRate="fast"
                       horizontal
                       keyboardShouldPersistTaps="handled"
-                      onMomentumScrollEnd={(e) => {
-                        const w = starredGalleryPageWidth;
-                        if (w <= 0) {
-                          return;
-                        }
-                        const idx = Math.round(e.nativeEvent.contentOffset.x / w);
-                        const clamped = Math.max(0, Math.min(idx, dashboardQuickMetrics.length - 1));
-                        setStarredGalleryIndex(clamped);
-                      }}
+                      onMomentumScrollEnd={onInsightsGalleryMomentumEnd}
+                      onScroll={onInsightsGalleryScroll}
                       onScrollBeginDrag={() => {
+                        suppressStarredGalleryLayoutScrollRef.current = true;
                         starredGallerySuppressAutoUntilRef.current = Date.now() + 12000;
                       }}
                       pagingEnabled
+                      scrollEventThrottle={16}
                       showsHorizontalScrollIndicator={false}
                     >
-                      {dashboardQuickMetrics.map((metric) => {
+                      {insightsGalleryScrollPages.map(({ metric, pageKey }) => {
                         const content = insightContentByTab[metric];
                         const w = starredGalleryPageWidth;
                         if (!content || w <= 0) {
-                          return <View key={`starred-gallery-page-${metric}`} style={{ width: w }} />;
+                          return <View key={pageKey} style={{ width: w }} />;
                         }
                         return (
-                          <View key={`starred-gallery-page-${metric}`} style={{ width: w }}>
+                          <View key={pageKey} style={{ width: w }}>
                             <InsightsFavoriteSparkPage
                               content={content}
                               iconGlyph={QUICK_ACTION_ICON_BY_TAB[metric]}
@@ -2605,6 +2874,7 @@ export default function App() {
                           hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
                           onPress={() => {
                             starredGallerySuppressAutoUntilRef.current = Date.now() + 12000;
+                            suppressStarredGalleryLayoutScrollRef.current = false;
                             setStarredGalleryIndex(idx);
                           }}
                           style={[
@@ -2628,15 +2898,23 @@ export default function App() {
                   value={quickMetricSearchQuery}
                 />
                 <View style={styles.quickMetricSearchResults}>
-                  {filteredQuickMetricOptions.slice(0, 6).map((metric) => {
+                  {filteredQuickMetricOptions.slice(0, 6).map((metric, chipIndex) => {
                     const isSelected = dashboardQuickMetrics.includes(metric);
                     return (
                       <TouchableOpacity
                         key={`search-${metric}`}
                         onPress={() => toggleDashboardQuickMetric(metric)}
-                        style={[styles.quickMetricOptionChip, isSelected && styles.quickMetricOptionChipActive]}
+                        style={[
+                          styles.quickMetricOptionChip,
+                          chipIndex > 0 && styles.quickMetricOptionChipSpacing,
+                          isSelected && styles.quickMetricOptionChipActive,
+                        ]}
                       >
-                        <Text style={[styles.quickMetricOptionText, isSelected && styles.quickMetricOptionTextActive]}>
+                        <Text
+                          ellipsizeMode="tail"
+                          numberOfLines={1}
+                          style={[styles.quickMetricOptionText, isSelected && styles.quickMetricOptionTextActive]}
+                        >
                           {isSelected ? '★' : '☆'} {metric}
                         </Text>
                       </TouchableOpacity>
@@ -3396,18 +3674,14 @@ export default function App() {
         </View>
 
         <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
-        <View style={styles.quickRow}>
-          {dashboardQuickMetrics.map((metric) => (
-            <View key={metric} style={styles.quickItem}>
-              <View style={[styles.quickIcon, { borderColor: QUICK_ACTION_THEME_COLOR_BY_TAB[metric] }]}>
-                <Text style={styles.quickIconGlyph}>{QUICK_ACTION_ICON_BY_TAB[metric]}</Text>
-              </View>
-              <Text numberOfLines={1} style={styles.quickText}>
-                {metric}
-              </Text>
-            </View>
-          ))}
-        </View>
+        <DashboardQuickActionMetricsRow
+          metrics={dashboardQuickMetrics}
+          onMetricPress={(metric) => {
+            setActiveTab('Insights');
+            setActiveInsightTab(metric);
+          }}
+          onReorder={setDashboardQuickMetrics}
+        />
 
         <View style={styles.activityContainer}>
           {dashboardActivity.map((item, index) => (
@@ -3911,6 +4185,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 12,
     paddingBottom: 10,
+    overflow: 'hidden',
+    maxWidth: '100%',
   },
   healthConnectBtn: {
     alignSelf: 'flex-start',
@@ -3950,9 +4226,12 @@ const styles = StyleSheet.create({
   },
   quickMetricSearchResults: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    flexWrap: 'nowrap',
+    alignItems: 'stretch',
+    width: '100%',
+    maxWidth: '100%',
     marginTop: 10,
+    overflow: 'hidden',
   },
   insightsQuickToThemesDivider: {
     height: 1,
@@ -3962,21 +4241,34 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   quickMetricOptionChip: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+    minWidth: 0,
     borderWidth: 1,
     borderColor: 'rgba(148,163,184,0.45)',
     backgroundColor: 'rgba(15,23,42,0.35)',
     borderRadius: 999,
-    paddingHorizontal: 10,
+    paddingHorizontal: 6,
     paddingVertical: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  quickMetricOptionChipSpacing: {
+    marginLeft: 6,
   },
   quickMetricOptionChipActive: {
     borderColor: 'rgba(96,165,250,0.75)',
     backgroundColor: 'rgba(59,130,246,0.3)',
   },
   quickMetricOptionText: {
+    width: '100%',
     color: '#cbd5e1',
     fontSize: 11,
     fontWeight: '700',
+    textAlign: 'center',
+    minWidth: 0,
   },
   quickMetricOptionTextActive: {
     color: '#eff6ff',
@@ -5371,7 +5663,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   quickItem: {
-    width: '16%',
+    flex: 1,
+    minWidth: 0,
     alignItems: 'center',
     gap: 7,
   },
