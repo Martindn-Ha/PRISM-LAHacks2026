@@ -229,10 +229,11 @@ const NAV_ITEMS = [
   { label: 'Goals', icon: '◎' },
 ];
 
-const MAP_LAYERS = ['Indoor', 'Recovery', 'Energy', 'Stress Reset'] as const;
-type MapLayer = (typeof MAP_LAYERS)[number];
+const MAP_LAYERS = ['All', 'Ticketmaster', 'Eventbrite'] as const;
+type MapLayerFilter = (typeof MAP_LAYERS)[number];
+type MapLayer = Exclude<MapLayerFilter, 'All'>;
 
-const GOALS_TABS = ['Active', 'Challenges', 'Communities'] as const;
+const GOALS_TABS = ['Active', 'Communities', 'Challenges'] as const;
 type GoalsTab = (typeof GOALS_TABS)[number];
 const CHALLENGE_FILTERS = ['All', 'Personal', 'Community'] as const;
 type ChallengeFilter = (typeof CHALLENGE_FILTERS)[number];
@@ -251,7 +252,7 @@ const GOALS_CHALLENGES: GoalChallenge[] = [
 ];
 
 const COMMUNITY_DISCOVERY = [
-  { name: 'Sleep Better Crew', city: 'Los Angeles, CA', members: '16,302 members' },
+  { name: 'LAHacks2026', city: 'Los Angeles, CA', members: '16,302 members' },
   { name: 'Mindful Minutes', city: 'Los Angeles, CA', members: '36,285 members' },
   { name: 'Hydration Squad', city: 'Los Angeles, CA', members: '20,217 members' },
   { name: 'Campus Recovery Club', city: 'Los Angeles, CA', members: '19,784 members' },
@@ -280,6 +281,60 @@ const COMMUNITY_PROGRESS_POSTS = [
 ] as const;
 
 type ProgressPostStatus = 'processing' | 'ready' | 'failed';
+type MediaVariants = {
+  originalUrl: string;
+  feedUrl: string;
+  thumbUrl: string;
+};
+type AristaEventContext = {
+  name?: string;
+  venue?: string;
+  startTime?: string;
+  endTime?: string;
+  confidence?: number;
+  sourceUrl?: string;
+};
+type AristaResourceContext = {
+  type?: string;
+  name?: string;
+  distanceMeters?: number;
+  confidence?: number;
+};
+type AristaContextPayload = {
+  eventDetected?: boolean;
+  event?: AristaEventContext | null;
+  resources?: AristaResourceContext[];
+  sourceMeta?: {
+    primarySource?: string;
+    sourceReliability?: number;
+    scoringVersion?: string;
+  };
+};
+type CommunityEventItem = {
+  id: string;
+  month: string;
+  day: string;
+  dow: string;
+  title: string;
+  meta: string;
+  rsvp: string;
+  sourceUrl?: string | null;
+  source?: string | null;
+  venue?: string | null;
+  /** Full street + locality from provider when available (Ticketmaster / Eventbrite venues). */
+  address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+};
+type MapScreenPin = {
+  id: string;
+  latitude: number;
+  longitude: number;
+  title: string;
+  subtitle: string;
+  pinColor?: string;
+  linkedEvent?: CommunityEventItem;
+};
 type ProgressBoardPost = {
   id: string;
   author: string;
@@ -288,6 +343,7 @@ type ProgressBoardPost = {
   imageLabel: string;
   imageUrl: string | null;
   mediaPublicId: string | null;
+  mediaVariants: MediaVariants | null;
   mediaType: 'image';
   status: ProgressPostStatus;
   processingError: string | null;
@@ -295,6 +351,12 @@ type ProgressBoardPost = {
 
 const CLOUDINARY_CLOUD_NAME = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME ?? '';
 const CLOUDINARY_UPLOAD_PRESET = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET ?? '';
+const COMMUNITY_SPOTLIGHT_IMAGE_URL = process.env.EXPO_PUBLIC_COMMUNITY_SPOTLIGHT_IMAGE_URL?.trim() ?? '';
+const ARISTA_CONTEXT_URL = process.env.EXPO_PUBLIC_ARISTA_CONTEXT_URL ?? '';
+const ARISTA_COMMUNITY_EVENTS_URL = process.env.EXPO_PUBLIC_ARISTA_COMMUNITY_EVENTS_URL
+  ?? (ARISTA_CONTEXT_URL.includes('/nearbyEventContext')
+    ? ARISTA_CONTEXT_URL.replace('/nearbyEventContext', '/communityEvents')
+    : '');
 const FIREBASE_CONFIG = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY ?? '',
   authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN ?? '',
@@ -321,6 +383,7 @@ const getFirestoreInstance = (): Firestore | null => {
 };
 
 const cloudinaryUploadEndpoint = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
+const cloudinaryDeliveryBase = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/upload`;
 
 const deriveImageName = (uri: string) => {
   const lastSegment = uri.split('/').pop();
@@ -357,6 +420,117 @@ const uploadImageToCloudinary = async (imageUri: string): Promise<{ secureUrl: s
     secureUrl: json.secure_url,
     publicId: json.public_id,
   };
+};
+
+const buildCloudinaryImageVariants = (publicId: string, originalUrl: string): MediaVariants => {
+  const encodedPublicId = publicId
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  return {
+    originalUrl,
+    feedUrl: `${cloudinaryDeliveryBase}/f_auto,q_auto,c_fill,w_1080,h_1080/${encodedPublicId}`,
+    thumbUrl: `${cloudinaryDeliveryBase}/f_auto,q_auto,c_fill,g_auto,w_360,h_360/${encodedPublicId}`,
+  };
+};
+
+const fetchAristaContext = async (payload: {
+  lat: number;
+  lon: number;
+  timestamp: string;
+  communityId: string;
+}): Promise<AristaContextPayload | null> => {
+  if (!ARISTA_CONTEXT_URL.trim()) {
+    return null;
+  }
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const response = await fetch(ARISTA_CONTEXT_URL, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!response.ok) {
+      return null;
+    }
+    const json = await response.json() as AristaContextPayload;
+    return json;
+  } catch {
+    return null;
+  }
+};
+
+const fetchAristaCommunityEvents = async (payload: {
+  lat: number;
+  lon: number;
+  communityId: string;
+  tab: 'Upcoming' | 'Past';
+}): Promise<CommunityEventItem[] | null> => {
+  if (!ARISTA_COMMUNITY_EVENTS_URL.trim()) {
+    return null;
+  }
+  try {
+    const params = new URLSearchParams({
+      lat: String(payload.lat),
+      lon: String(payload.lon),
+      communityId: payload.communityId,
+      tab: payload.tab,
+    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const response = await fetch(`${ARISTA_COMMUNITY_EVENTS_URL}?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!response.ok) {
+      return null;
+    }
+    const json = await response.json() as { events?: Array<CommunityEventItem> };
+    if (!Array.isArray(json.events)) {
+      return [];
+    }
+    return json.events.map((event) => ({
+      id: event.id,
+      month: event.month,
+      day: event.day,
+      dow: event.dow,
+      title: event.title,
+      meta: event.meta,
+      rsvp: event.rsvp,
+      sourceUrl: event.sourceUrl ?? null,
+      source: event.source ?? null,
+      venue: event.venue ?? null,
+      address: typeof event.address === 'string' && event.address.trim().length > 0 ? event.address.trim() : null,
+      latitude: typeof event.latitude === 'number' && Number.isFinite(event.latitude) ? event.latitude : null,
+      longitude: typeof event.longitude === 'number' && Number.isFinite(event.longitude) ? event.longitude : null,
+    }));
+  } catch {
+    return null;
+  }
+};
+
+const formatEventSourceName = (source?: string | null) => {
+  const normalized = (source ?? '').trim().toLowerCase();
+  if (normalized === 'ticketmaster') {
+    return 'Ticketmaster';
+  }
+  if (normalized === 'eventbrite') {
+    return 'Eventbrite';
+  }
+  if (!normalized) {
+    return 'Ticketmaster';
+  }
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
 
 const COMMUNITY_OVERVIEW_DESCRIPTION =
@@ -479,23 +653,8 @@ const healthKit = rawHealthKit as {
   ) => void;
 };
 
-const COMMUNITY_UPCOMING_EVENTS = [
-  { id: 'u1', month: 'Apr', day: '27', dow: 'Sun', title: 'Beach Recovery Walk', meta: 'Social · 2400 Ocean Front Walk, Venice', rsvp: "18 RSVP'd" },
-  { id: 'u2', month: 'May', day: '02', dow: 'Fri', title: 'Hydration Accountability Meetup', meta: 'Community · 600 W 7th St, Los Angeles', rsvp: "31 RSVP'd" },
-  { id: 'u3', month: 'May', day: '09', dow: 'Fri', title: 'Morning Mobility Session', meta: 'Wellness · 200 Santa Monica Pier, Santa Monica', rsvp: "24 RSVP'd" },
-  { id: 'u4', month: 'May', day: '14', dow: 'Wed', title: 'Community 5k Checkpoint', meta: 'Run Club · Exposition Park, Los Angeles', rsvp: "42 RSVP'd" },
-  { id: 'u5', month: 'May', day: '21', dow: 'Wed', title: 'Night Wind-Down Walk', meta: 'Mindfulness · Echo Park Lake, Los Angeles', rsvp: "16 RSVP'd" },
-  { id: 'u6', month: 'May', day: '28', dow: 'Wed', title: 'Rest + Stretch Session', meta: 'Recovery · 151 S Grand Ave, Los Angeles', rsvp: "27 RSVP'd" },
-] as const;
-
-const COMMUNITY_PAST_EVENTS = [
-  { id: 'p1', month: 'Apr', day: '12', dow: 'Sat', title: 'Sunrise Run + Breathwork', meta: 'Social · Griffith Park, Los Angeles', rsvp: "46 RSVP'd" },
-  { id: 'p2', month: 'Mar', day: '29', dow: 'Sat', title: 'Sleep Score Sprint Week Wrap', meta: 'Community · UCLA Campus, Westwood', rsvp: "39 RSVP'd" },
-  { id: 'p3', month: 'Mar', day: '15', dow: 'Sat', title: 'Stress Reset Outdoor Circle', meta: 'Wellness · 200 N Grand Ave, Los Angeles', rsvp: "27 RSVP'd" },
-  { id: 'p4', month: 'Mar', day: '08', dow: 'Sat', title: 'Hydration Week Kickoff', meta: 'Community · 900 W Olympic Blvd, Los Angeles', rsvp: "52 RSVP'd" },
-  { id: 'p5', month: 'Feb', day: '24', dow: 'Mon', title: 'Evening Mobility Flow', meta: 'Recovery · Runyon Canyon, Los Angeles', rsvp: "21 RSVP'd" },
-  { id: 'p6', month: 'Feb', day: '11', dow: 'Tue', title: 'Mindful Miles Meetup', meta: 'Social · Dockweiler Beach, Los Angeles', rsvp: "33 RSVP'd" },
-] as const;
+const COMMUNITY_UPCOMING_EVENTS: CommunityEventItem[] = [];
+const COMMUNITY_PAST_EVENTS: CommunityEventItem[] = [];
 
 function ActivityMiniIcon({ label }: { label: string }) {
   if (label === 'STEPS') {
@@ -579,7 +738,7 @@ export default function App() {
   const [locationCoords, setLocationCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [mapLocationStatus, setMapLocationStatus] = useState<'idle' | 'granted' | 'denied'>('idle');
   const [mapCoords, setMapCoords] = useState<{ lat: number; lon: number } | null>(null);
-  const [activeMapLayer, setActiveMapLayer] = useState<MapLayer>('Indoor');
+  const [activeMapLayer, setActiveMapLayer] = useState<MapLayerFilter | null>('All');
   const [activeInsightTab, setActiveInsightTab] = useState<InsightTab | null>(null);
   const [dashboardQuickMetrics, setDashboardQuickMetrics] = useState<InsightTab[]>(() =>
     QUICK_ACTION_METRIC_OPTIONS.slice(0, DASHBOARD_QUICK_ACTION_SLOTS),
@@ -603,6 +762,13 @@ export default function App() {
   const [selectedJoinedCommunityName, setSelectedJoinedCommunityName] = useState<string | null>(null);
   const [selectedCommunityAction, setSelectedCommunityAction] = useState('Progress Board');
   const [eventsTab, setEventsTab] = useState<'Upcoming' | 'Past'>('Upcoming');
+  const [communityEventsByTab, setCommunityEventsByTab] = useState<Record<'Upcoming' | 'Past', CommunityEventItem[]>>({
+    Upcoming: [...COMMUNITY_UPCOMING_EVENTS],
+    Past: [...COMMUNITY_PAST_EVENTS],
+  });
+  const [loadingCommunityEvents, setLoadingCommunityEvents] = useState(false);
+  const [mapDiscoveryEvents, setMapDiscoveryEvents] = useState<CommunityEventItem[]>([]);
+  const [mapDiscoveryEventsLoading, setMapDiscoveryEventsLoading] = useState(false);
   const [isInteractingWithEventsList, setIsInteractingWithEventsList] = useState(false);
   const [showOverviewPopup, setShowOverviewPopup] = useState(false);
   const [showInvitePopup, setShowInvitePopup] = useState(false);
@@ -673,6 +839,7 @@ export default function App() {
       statusColor: heartRateCardValue >= 95 ? '#f59e0b' : heartRateCardValue <= 52 ? '#7DA2C7' : '#7CB89B',
     },
   ];
+  const sleepMinutesForDisplay = Math.min(activitySleepMinutes, 9 * 60 + 59);
   const dashboardActivity = [
     {
       label: 'STEPS',
@@ -682,8 +849,8 @@ export default function App() {
     },
     {
       label: 'SLEEP',
-      value: `${Math.floor(activitySleepMinutes / 60)}h ${String(activitySleepMinutes % 60).padStart(2, '0')}m`,
-      fill: Math.max(8, Math.min(100, Math.round((activitySleepMinutes / (8 * 60)) * 100))),
+      value: `${Math.floor(sleepMinutesForDisplay / 60)}h ${String(sleepMinutesForDisplay % 60).padStart(2, '0')}m`,
+      fill: Math.max(8, Math.min(100, Math.round((sleepMinutesForDisplay / (8 * 60)) * 100))),
       color: '#9B8FC6',
     },
     {
@@ -733,41 +900,70 @@ export default function App() {
   const rightX = baseCenterX - perpX * arrowHalfWidth;
   const rightY = baseCenterY - perpY * arrowHalfWidth;
 
-  const mapLayerOffsets: Record<MapLayer, Array<{ dLat: number; dLon: number; title: string; subtitle: string }>> = {
-    Indoor: [
-      { dLat: 0.0012, dLon: -0.0014, title: 'Indoor Gym', subtitle: 'Best for AQI-safe movement' },
-      { dLat: -0.0011, dLon: 0.0015, title: 'Hydration Station', subtitle: 'Quick refill stop' },
-    ],
-    Recovery: [
-      { dLat: 0.0015, dLon: 0.0008, title: 'Quiet Study Lounge', subtitle: 'Low-stimulus recovery spot' },
-      { dLat: -0.0012, dLon: -0.0009, title: 'Wellness Center', subtitle: 'Recovery-focused support' },
-    ],
-    Energy: [
-      { dLat: 0.001, dLon: 0.0014, title: 'Healthy Dining', subtitle: 'Balanced meal options' },
-      { dLat: -0.0014, dLon: 0.001, title: 'Campus Walk Loop', subtitle: 'Quick energy boost route' },
-    ],
-    'Stress Reset': [
-      { dLat: 0.0009, dLon: -0.0012, title: 'Meditation Room', subtitle: '2-min breathing reset' },
-      { dLat: -0.001, dLon: -0.0014, title: 'Garden Bench', subtitle: 'Low-noise decompression' },
-    ],
+  const resolveEventProvider = (event: CommunityEventItem): 'ticketmaster' | 'eventbrite' | 'unknown' => {
+    const src = (event.source ?? '').trim().toLowerCase();
+    if (src === 'ticketmaster' || src === 'eventbrite') {
+      return src;
+    }
+    const url = (event.sourceUrl ?? '').toLowerCase();
+    if (url.includes('eventbrite')) {
+      return 'eventbrite';
+    }
+    if (url.includes('ticketmaster')) {
+      return 'ticketmaster';
+    }
+    return 'unknown';
   };
 
-  const mapRecommendations: Array<{
-    id: string;
-    latitude: number;
-    longitude: number;
-    title: string;
-    subtitle: string;
-  }> =
+  const providerPinsFromEvents = (events: CommunityEventItem[], source: 'ticketmaster' | 'eventbrite' | 'both'): MapScreenPin[] => {
+    const list =
+      source === 'both'
+        ? events
+        : events.filter((e) => resolveEventProvider(e) === source);
+    return list
+      .filter(
+        (e) =>
+          typeof e.latitude === 'number' &&
+          typeof e.longitude === 'number' &&
+          Number.isFinite(e.latitude) &&
+          Number.isFinite(e.longitude),
+      )
+      .map((e) => {
+        const provider = resolveEventProvider(e);
+        const pinColor = provider === 'eventbrite' ? '#f97316' : '#0ea5e9';
+        const locationLine = e.address ?? e.meta;
+        return {
+          id: `evt-${provider}-${e.id}`,
+          latitude: e.latitude as number,
+          longitude: e.longitude as number,
+          title: e.title,
+          subtitle: e.venue ? `${e.venue} · ${locationLine}` : locationLine,
+          pinColor,
+          linkedEvent: e,
+        };
+      });
+  };
+  const fixedMapPins: MapScreenPin[] = [
+    {
+      id: 'landmark-pauley-pavilion',
+      latitude: 34.0703,
+      longitude: -118.4468,
+      title: 'Pauley Pavilion',
+      subtitle: 'UCLA events and activity hub',
+      pinColor: '#22c55e',
+    },
+  ];
+
+  const mapRecommendations: MapScreenPin[] =
     mapCoords == null
       ? []
-      : mapLayerOffsets[activeMapLayer as MapLayer].map((item: { dLat: number; dLon: number; title: string; subtitle: string }, idx: number) => ({
-          id: `${activeMapLayer}-${idx}`,
-          latitude: mapCoords.lat + item.dLat,
-          longitude: mapCoords.lon + item.dLon,
-          title: item.title,
-          subtitle: item.subtitle,
-        }));
+      : activeMapLayer == null
+        ? []
+        : activeMapLayer === 'All'
+          ? [...providerPinsFromEvents(mapDiscoveryEvents, 'both'), ...fixedMapPins]
+          : activeMapLayer === 'Ticketmaster'
+            ? [...providerPinsFromEvents(mapDiscoveryEvents, 'ticketmaster'), ...fixedMapPins]
+            : [...providerPinsFromEvents(mapDiscoveryEvents, 'eventbrite'), ...fixedMapPins];
   const recenterMapToCurrentLocation = async () => {
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
@@ -823,6 +1019,7 @@ export default function App() {
   const selectedCommunityShareLink = selectedJoinedCommunity
     ? `https://connectedwellness.app/community/${toShareSlug(selectedJoinedCommunity.name)}?invite=demo2026`
     : null;
+  const displayedEvents = communityEventsByTab[eventsTab];
   const progressPostsForSelectedCommunity: ProgressBoardPost[] = selectedJoinedCommunity == null
     ? []
     : [
@@ -835,6 +1032,7 @@ export default function App() {
           imageLabel: post.imageLabel,
           imageUrl: null,
           mediaPublicId: null,
+          mediaVariants: null,
           mediaType: 'image' as const,
           status: 'ready' as const,
           processingError: null,
@@ -998,6 +1196,7 @@ export default function App() {
       imageLabel: 'Uploading progress photo...',
       imageUrl: createPostImageUri,
       mediaPublicId: null,
+      mediaVariants: null,
       mediaType: 'image',
       status: 'processing',
       processingError: null,
@@ -1008,6 +1207,16 @@ export default function App() {
     }));
     try {
       const cloudinaryResult = await uploadImageToCloudinary(createPostImageUri);
+      const mediaVariants = buildCloudinaryImageVariants(cloudinaryResult.publicId, cloudinaryResult.secureUrl);
+      const preferredCoords = locationCoords ?? mapCoords;
+      const aristaContext = preferredCoords
+        ? await fetchAristaContext({
+            lat: preferredCoords.lat,
+            lon: preferredCoords.lon,
+            timestamp: new Date().toISOString(),
+            communityId: toShareSlug(communityName),
+          })
+        : null;
       const firestore = getFirestoreInstance();
       if (firestore) {
         await addDoc(collection(firestore, 'progress_posts'), {
@@ -1018,8 +1227,12 @@ export default function App() {
           caption: resolvedCaption,
           mediaUrl: cloudinaryResult.secureUrl,
           mediaPublicId: cloudinaryResult.publicId,
+          mediaVariants,
           mediaType: 'image',
           status: 'processing',
+          eventContext: aristaContext?.event ?? null,
+          resourceContext: aristaContext?.resources ?? [],
+          sourceMeta: aristaContext?.sourceMeta ?? null,
           autoDescription: '',
           autoTags: [],
           createdAt: serverTimestamp(),
@@ -1028,8 +1241,9 @@ export default function App() {
       }
       updateCommunityPost(communityName, localPostId, {
         imageLabel: 'Uploaded progress photo',
-        imageUrl: cloudinaryResult.secureUrl,
+        imageUrl: mediaVariants.feedUrl,
         mediaPublicId: cloudinaryResult.publicId,
+        mediaVariants,
         status: 'ready',
       });
       setShowCreateProgressPostModal(false);
@@ -1070,6 +1284,82 @@ export default function App() {
     }
     await Linking.openURL(smsUrl);
   };
+
+  const openEventLinkPrompt = (event: CommunityEventItem) => {
+    if (!event.sourceUrl) {
+      Alert.alert('No event link', 'This event does not have an external link yet.');
+      return;
+    }
+    Alert.alert(
+      'Open event link?',
+      `Do you want to open ${event.title} in your browser?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Open',
+          onPress: () => {
+            void Linking.openURL(event.sourceUrl as string).catch(() => {
+              Alert.alert('Unable to open link', 'Please try again in a moment.');
+            });
+          },
+        },
+      ],
+    );
+  };
+
+  useEffect(() => {
+    const loadCommunityEvents = async () => {
+      if (!selectedJoinedCommunity || selectedCommunityAction !== 'Events') {
+        return;
+      }
+      const preferredCoords = mapCoords ?? locationCoords ?? { lat: 34.0689, lon: -118.4452 };
+      setLoadingCommunityEvents(true);
+      const fetched = await fetchAristaCommunityEvents({
+        lat: preferredCoords.lat,
+        lon: preferredCoords.lon,
+        communityId: toShareSlug(selectedJoinedCommunity.name),
+        tab: eventsTab,
+      });
+      if (fetched && fetched.length > 0) {
+        setCommunityEventsByTab((prev) => ({ ...prev, [eventsTab]: fetched }));
+      }
+      setLoadingCommunityEvents(false);
+    };
+    void loadCommunityEvents();
+  }, [selectedJoinedCommunity, selectedCommunityAction, eventsTab, mapCoords, locationCoords]);
+
+  useEffect(() => {
+    if (activeTab !== 'Map') {
+      setMapDiscoveryEvents([]);
+      setMapDiscoveryEventsLoading(false);
+      return;
+    }
+    if (mapCoords == null) {
+      return;
+    }
+    if (!ARISTA_COMMUNITY_EVENTS_URL.trim()) {
+      setMapDiscoveryEvents([]);
+      return;
+    }
+    let cancelled = false;
+    setMapDiscoveryEventsLoading(true);
+    void (async () => {
+      const fetched = await fetchAristaCommunityEvents({
+        lat: mapCoords.lat,
+        lon: mapCoords.lon,
+        communityId: 'lahacks2026',
+        tab: 'Upcoming',
+      });
+      if (cancelled) {
+        return;
+      }
+      setMapDiscoveryEvents(Array.isArray(fetched) ? fetched : []);
+      setMapDiscoveryEventsLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, mapCoords]);
 
   const initHealthKitAsync = async () => {
     if (healthKitLoading) {
@@ -1883,7 +2173,7 @@ export default function App() {
         setActivitySteps((prev) => Math.max(0, Math.min(25000, prev + jitter(40, 280))));
       }
       if (demoDashboardValueDrift.sleep) {
-        setActivitySleepMinutes((prev) => Math.max(180, Math.min(600, prev + jitter(-12, 14))));
+        setActivitySleepMinutes((prev) => Math.max(180, Math.min(9 * 60 + 59, prev + jitter(-12, 14))));
       }
       if (demoDashboardValueDrift.meds) {
         setActivityMedsTaken((prev) => {
@@ -2031,7 +2321,7 @@ export default function App() {
             {MAP_LAYERS.map((layer) => (
               <TouchableOpacity
                 key={layer}
-                onPress={() => setActiveMapLayer(layer)}
+                onPress={() => setActiveMapLayer((prev) => (prev === layer ? null : layer))}
                 style={[styles.mapLayerChip, activeMapLayer === layer && styles.mapLayerChipActive]}
               >
                 <Text style={[styles.mapLayerChipText, activeMapLayer === layer && styles.mapLayerChipTextActive]}>{layer}</Text>
@@ -2045,6 +2335,9 @@ export default function App() {
                 ? 'Location permission denied. Enable it to view your map.'
                 : 'Requesting location...'}
           </Text>
+          {mapCoords && mapDiscoveryEventsLoading ? (
+            <Text style={styles.mapSubtitle}>Loading Ticketmaster & Eventbrite listings…</Text>
+          ) : null}
           {mapCoords ? (
             <View style={styles.mapContainer}>
               <MapView
@@ -2063,9 +2356,14 @@ export default function App() {
                   <Marker
                     key={item.id}
                     coordinate={{ latitude: item.latitude, longitude: item.longitude }}
-                    pinColor="#22c55e"
+                    pinColor={item.pinColor ?? '#22c55e'}
                     title={item.title}
                     description={item.subtitle}
+                    onPress={() => {
+                      if (item.linkedEvent) {
+                        openEventLinkPrompt(item.linkedEvent);
+                      }
+                    }}
                   />
                 ))}
               </MapView>
@@ -2297,6 +2595,12 @@ export default function App() {
               {selectedJoinedCommunity ? (
                 <View>
                   <View style={styles.communityHero}>
+                    {COMMUNITY_SPOTLIGHT_IMAGE_URL ? (
+                      <>
+                        <Image source={{ uri: COMMUNITY_SPOTLIGHT_IMAGE_URL }} style={styles.communityHeroImage} resizeMode="cover" />
+                        <View style={styles.communityHeroScrim} />
+                      </>
+                    ) : null}
                     <View style={styles.communityHeroActions}>
                       <TouchableOpacity onPress={() => setSelectedJoinedCommunityName(null)} style={styles.communityHeroIconBtn}>
                         <Text style={styles.communityHeroIconText}>{'<'}</Text>
@@ -2426,25 +2730,44 @@ export default function App() {
                         onTouchStart={() => setIsInteractingWithEventsList(true)}
                         style={styles.eventsListContainer}
                       >
-                        <ScrollView bounces={false} nestedScrollEnabled overScrollMode="never" showsVerticalScrollIndicator={false}>
-                          {(eventsTab === 'Upcoming' ? COMMUNITY_UPCOMING_EVENTS : COMMUNITY_PAST_EVENTS).map((event, index, arr) => (
-                            <View key={`${selectedJoinedCommunity.name}-${event.id}`}>
-                              <View style={styles.eventRow}>
-                                <View style={styles.eventDateCol}>
-                                  <Text style={styles.eventDateMonth}>{event.month}</Text>
-                                  <Text style={styles.eventDateDay}>{event.day}</Text>
-                                  <Text style={styles.eventDateDow}>{event.dow}</Text>
-                                </View>
-                                <View style={styles.eventInfoCol}>
-                                  <Text style={styles.eventTitle}>{event.title}</Text>
-                                  <Text style={styles.eventMeta}>{event.meta}</Text>
-                                  <Text style={styles.eventRsvp}>{event.rsvp}</Text>
-                                </View>
+                        {loadingCommunityEvents ? (
+                          <Text style={styles.eventsLoadingText}>Loading live events...</Text>
+                        ) : null}
+                        {displayedEvents.length === 0 && !loadingCommunityEvents ? (
+                          <Text style={styles.eventsEmptyText}>No live events found for this tab yet.</Text>
+                        ) : (
+                          <ScrollView bounces={false} nestedScrollEnabled overScrollMode="never" showsVerticalScrollIndicator={false}>
+                            {displayedEvents.map((event, index, arr) => (
+                              <View key={`${selectedJoinedCommunity.name}-${event.id}`}>
+                                <TouchableOpacity activeOpacity={0.85} onPress={() => openEventLinkPrompt(event)} style={styles.eventRow}>
+                                  <View style={styles.eventDateCol}>
+                                    <Text style={styles.eventDateMonth}>{event.month}</Text>
+                                    <Text style={styles.eventDateDay}>{event.day}</Text>
+                                    <Text style={styles.eventDateDow}>{event.dow}</Text>
+                                  </View>
+                                  <View style={styles.eventInfoCol}>
+                                    <Text style={styles.eventTitle}>{event.title}</Text>
+                                    <Text style={styles.eventMeta}>{event.meta}</Text>
+                                    <Text
+                                      style={[
+                                        styles.eventRsvp,
+                                        (event.source ?? 'ticketmaster').toLowerCase() === 'eventbrite'
+                                          ? styles.eventSourceEventbrite
+                                          : styles.eventSourceTicketmaster,
+                                      ]}
+                                    >
+                                      {`${formatEventSourceName(event.source)}: `}
+                                      <Text style={eventsTab === 'Upcoming' ? styles.eventStatusLive : styles.eventStatusPassed}>
+                                        {eventsTab === 'Upcoming' ? 'Live' : 'Passed'}
+                                      </Text>
+                                    </Text>
+                                  </View>
+                                </TouchableOpacity>
+                                {index < arr.length - 1 ? <View style={styles.eventDivider} /> : null}
                               </View>
-                              {index < arr.length - 1 ? <View style={styles.eventDivider} /> : null}
-                            </View>
-                          ))}
-                        </ScrollView>
+                            ))}
+                          </ScrollView>
+                        )}
                       </View>
                     </View>
                   ) : (
@@ -2469,7 +2792,11 @@ export default function App() {
                           ) : null}
                           <View style={styles.progressPostImage}>
                             {post.imageUrl ? (
-                              <Image resizeMode="cover" source={{ uri: post.imageUrl }} style={styles.progressPostImageActual} />
+                              <Image
+                                resizeMode="cover"
+                                source={{ uri: post.mediaVariants?.feedUrl ?? post.imageUrl }}
+                                style={styles.progressPostImageActual}
+                              />
                             ) : (
                               <Text style={styles.progressPostImageText}>{post.imageLabel}</Text>
                             )}
@@ -2577,9 +2904,13 @@ export default function App() {
         <>
         <ScrollView bounces={false} contentContainerStyle={styles.content} overScrollMode="never" showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => setShowAlertsScreen(true)} style={styles.alertBlock}>
+          <TouchableOpacity
+            hitSlop={{ top: 14, right: 14, left: 14, bottom: 6 }}
+            onPress={() => setShowAlertsScreen(true)}
+            style={styles.alertBlock}
+          >
             <View style={styles.alertIconWrap}>
-              <Svg height={28} viewBox="0 0 48 32" width={40}>
+              <Svg height={28} pointerEvents="none" viewBox="0 0 48 32" width={40}>
                 <Path
                   d="M9 8h4l3-3h16l3 3h4l3 4v11l-3 3h-4l-2 2H15l-2-2H9l-3-3V12l3-4zm7 4c-4 0-7 3-7 7s3 7 7 7h16c4 0 7-3 7-7s-3-7-7-7H16zm7 2h6v3h-6v-3z"
                   fill="none"
@@ -3906,6 +4237,14 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 12,
     justifyContent: 'space-between',
+    overflow: 'hidden',
+  },
+  communityHeroImage: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  communityHeroScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(3, 7, 18, 0.42)',
   },
   communityHeroActions: {
     flexDirection: 'row',
@@ -4138,6 +4477,19 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     height: 318,
   },
+  eventsLoadingText: {
+    color: '#93c5fd',
+    fontSize: 12,
+    fontWeight: '700',
+    paddingTop: 6,
+    paddingBottom: 2,
+  },
+  eventsEmptyText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    textAlign: 'center',
+    paddingTop: 18,
+  },
   eventRow: {
     flexDirection: 'row',
     gap: 12,
@@ -4193,18 +4545,29 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   eventRsvp: {
-    color: '#86efac',
     fontSize: 12,
     fontWeight: '700',
     marginTop: 4,
+  },
+  eventSourceTicketmaster: {
+    color: '#60a5fa',
+  },
+  eventSourceEventbrite: {
+    color: '#fb923c',
+  },
+  eventStatusLive: {
+    color: '#86efac',
+  },
+  eventStatusPassed: {
+    color: '#fca5a5',
   },
   progressPostCard: {
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.14)',
     borderRadius: 14,
     backgroundColor: 'rgba(10,14,24,0.82)',
-    padding: 12,
-    marginBottom: 10,
+    padding: 14,
+    marginBottom: 14,
   },
   progressPostHeader: {
     flexDirection: 'row',
@@ -4236,11 +4599,13 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   progressPostImage: {
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
     backgroundColor: 'rgba(30,41,59,0.7)',
-    height: 148,
+    width: '100%',
+    aspectRatio: 1,
+    minHeight: 280,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',

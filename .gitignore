@@ -13,6 +13,8 @@ Cloudinary-Firestore-Hackathon-Workflow.txt
 Event-Detection-Workflow.txt
 Implementation-Checklist-Progress-Post-Pipeline.txt
 Unified-Architecture-Arista-Zetic-Cloudinary-Firebase.txt
+Arista-Challenge-Pitch-and-Demo-Script.txt
+Documents/
 
 # Node / Expo
 **/node_modules/
@@ -22,6 +24,7 @@ Unified-Architecture-Arista-Zetic-Cloudinary-Firebase.txt
 **/build/
 **/.env
 **/.env.*
+!**/.env.example
 **/*.local
 
 # Local secrets / service credentials
