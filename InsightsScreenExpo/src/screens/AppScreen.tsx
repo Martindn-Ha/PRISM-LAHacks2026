@@ -26,7 +26,7 @@ import * as Location from 'expo-location';
 import * as Contacts from 'expo-contacts';
 import * as ImagePicker from 'expo-image-picker';
 import MapView, { Marker } from 'react-native-maps';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { getNextDemoScore, getScorePresentation } from '../services/scoringService';
 import { fetchCurrentWeather } from '../services/weatherService';
 import { styles } from '../styles/appStyles';
@@ -70,6 +70,7 @@ import { InsightsFavoriteSparkPage } from '../components/insights/InsightsFavori
 import { ActivityMiniIcon, InsightsBulbIcon } from '../components/icons/WellnessIcons';
 import { fetchAristaCommunityEvents, fetchAristaContext } from '../lib/aristaClient';
 import { buildCloudinaryImageVariants, uploadImageToCloudinary } from '../lib/cloudinaryUpload';
+import { generateProgressPostMetadata, preloadZeticModel } from '../lib/zeticClient';
 import { Notifications } from '../lib/expoNotifications';
 import { getFirestoreInstance } from '../lib/firestoreClient';
 import { healthKit } from '../lib/appleHealthKit';
@@ -674,34 +675,62 @@ export default function App() {
             communityId: toShareSlug(communityName),
           })
         : null;
+      const imageHints = cloudinaryResult.publicId
+        .split(/[/_-]+/)
+        .map((part) => part.trim())
+        .filter((part) => part.length >= 3)
+        .slice(0, 6);
+      const zeticResult = await generateProgressPostMetadata({
+        caption: resolvedCaption,
+        aristaContext,
+        imageHints,
+      });
       const db = getFirestoreInstance();
+      let firestoreWriteError: string | null = null;
       if (db) {
-        await addDoc(collection(db, 'progress_posts'), {
-          communityId: toShareSlug(communityName),
-          communityName,
-          authorId: 'demo-user',
-          authorName: 'You',
-          caption: resolvedCaption,
-          mediaUrl: cloudinaryResult.secureUrl,
-          mediaPublicId: cloudinaryResult.publicId,
-          mediaVariants,
-          mediaType: 'image',
-          status: 'processing',
-          eventContext: aristaContext?.event ?? null,
-          resourceContext: aristaContext?.resources ?? [],
-          sourceMeta: aristaContext?.sourceMeta ?? null,
-          autoDescription: '',
-          autoTags: [],
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
+        try {
+          const docRef = await addDoc(collection(db, 'progress_posts'), {
+            communityId: toShareSlug(communityName),
+            communityName,
+            authorId: 'demo-user',
+            authorName: 'You',
+            caption: resolvedCaption,
+            mediaUrl: cloudinaryResult.secureUrl,
+            mediaPublicId: cloudinaryResult.publicId,
+            mediaVariants,
+            mediaType: 'image',
+            status: 'processing',
+            eventContext: aristaContext?.event ?? null,
+            resourceContext: aristaContext?.resources ?? [],
+            sourceMeta: aristaContext?.sourceMeta ?? null,
+            autoDescription: '',
+            autoTags: [],
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          await updateDoc(docRef, {
+            status: 'ready',
+            autoDescription: zeticResult.autoDescription,
+            autoTags: zeticResult.autoTags,
+            eventContext: zeticResult.useEventContext ? (aristaContext?.event ?? null) : null,
+            zeticConfidence: zeticResult.confidence,
+            zeticSource: zeticResult.source,
+            zeticError: zeticResult.error,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (error) {
+          firestoreWriteError = toErrorText(error);
+        }
       }
       updateCommunityPost(communityName, localPostId, {
-        imageLabel: 'Uploaded progress photo',
+        imageLabel: firestoreWriteError
+          ? 'Uploaded photo (cloud only)'
+          : 'Uploaded progress photo',
         imageUrl: mediaVariants.feedUrl,
         mediaPublicId: cloudinaryResult.publicId,
         mediaVariants,
         status: 'ready',
+        processingError: firestoreWriteError,
       });
       setShowCreateProgressPostModal(false);
       setCreatePostCaption('');
@@ -763,6 +792,10 @@ export default function App() {
       ],
     );
   };
+
+  useEffect(() => {
+    void preloadZeticModel();
+  }, []);
 
   useEffect(() => {
     const loadCommunityEvents = async () => {
@@ -2016,7 +2049,24 @@ export default function App() {
               <Text style={styles.scoreSub}>{scorePresentation.subtitle}</Text>
             </View>
             <View style={styles.grid}>{dashboardMetrics.map((item) => (<View key={item.label} style={styles.glassCard}><Text style={styles.metricLabel}>{item.label}</Text><View style={styles.metricValueRow}><Text style={styles.metricValue}>{item.value}</Text><Text style={styles.metricUnit}>{item.unit}</Text></View><Text style={[styles.metricStatus, { color: item.statusColor }]}>{item.status}</Text></View>))}</View>
-            <View style={styles.glassCardLarge}><Text style={styles.cardBadge}>NEURAL AI ADVISOR</Text><Text style={styles.cardTitle}>Chan</Text><Text style={styles.cardText}>Glucose high. Need recommendations?</Text><View style={styles.row}><TouchableOpacity style={styles.primaryBtn}><Text style={styles.primaryBtnText}>Suggestions</Text></TouchableOpacity><TouchableOpacity style={styles.secondaryBtn}><Text style={styles.secondaryBtnText}>Not Now</Text></TouchableOpacity></View></View>
+            <View style={styles.glassCardLarge}>
+              <Text style={styles.cardBadge}>NEURAL AI ADVISOR</Text>
+              <View style={styles.advisorCardBody}>
+                <Image source={require('../../assets/chanmoji.png')} resizeMode="contain" style={styles.advisorImage} />
+                <View style={styles.advisorContent}>
+                  <Text style={styles.cardTitle}>Dr. Chan</Text>
+                  <Text style={styles.cardText}>Glucose high. Need recommendations?</Text>
+                  <View style={styles.row}>
+                    <TouchableOpacity style={styles.primaryBtn}>
+                      <Text style={styles.primaryBtnText}>Suggestions</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.secondaryBtn}>
+                      <Text style={styles.secondaryBtnText}>Not Now</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </View>
             <View style={[styles.glassCardLarge, styles.foodCard]}><View style={styles.foodCardHeader}><Text style={[styles.cardBadge, { color: '#EAB308' }]}>FOOD SUGGESTION</Text><TouchableOpacity onPress={() => setFoodSuggestionCollapsed((prev) => !prev)} style={styles.foodToggleBtn}><Text style={styles.foodToggleText}>{foodSuggestionCollapsed ? 'Expand' : 'Collapse'}</Text></TouchableOpacity></View>{!foodSuggestionCollapsed ? (<><Text style={styles.cardText}>Orange Chicken is available. Want a healthier option?</Text><TouchableOpacity style={styles.foodBtn}><Text style={styles.foodBtnText}>View Options</Text></TouchableOpacity></>) : null}</View>
             <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
             <DashboardQuickActionMetricsRow metrics={dashboardQuickMetrics} onMetricPress={(metric) => { setActiveTab('Insights'); setActiveInsightTab(metric); }} onReorder={setDashboardQuickMetrics} />

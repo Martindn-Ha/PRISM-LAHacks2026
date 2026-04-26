@@ -22,6 +22,7 @@ export default function GoalsScreen(props: Props) {
   return (
         <View style={styles.goalsScreen}>
           <Text style={styles.goalsTitle}>Goals</Text>
+          <Text style={styles.goalsSubtitle}>Track progress across communities, events, and personal challenges.</Text>
           <View style={styles.goalsTabRow}>
             {GOALS_TABS.map((tab) => (
               <TouchableOpacity
