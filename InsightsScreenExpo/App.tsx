@@ -1,11 +1,38 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
-import { Alert, Linking, Modal, NativeModules, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Image,
+  Keyboard,
+  KeyboardAvoidingView,
+  Linking,
+  Modal,
+  NativeModules,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Reanimated, { runOnJS, type SharedValue, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import Svg, { Circle, Defs, LinearGradient, Path, Stop, Text as SvgText } from 'react-native-svg';
 import * as Location from 'expo-location';
 import * as Contacts from 'expo-contacts';
+import * as ImagePicker from 'expo-image-picker';
 import * as AppleHealthKitModule from 'react-native-health';
 import MapView, { Marker } from 'react-native-maps';
+import { initializeApp, getApp, getApps } from 'firebase/app';
+import { addDoc, collection, getFirestore, serverTimestamp, type Firestore } from 'firebase/firestore';
 import { getNextDemoScore, getScorePresentation } from './src/services/scoringService';
 import { fetchCurrentWeather } from './src/services/weatherService';
 
@@ -130,14 +157,15 @@ const INSIGHTS_TAB_CONTENT: Record<InsightTab, InsightContent> = INSIGHTS_TABS.r
 }, {} as Record<InsightTab, InsightContent>);
 
 const QUICK_ACTION_METRIC_OPTIONS: InsightTab[] = [
-  'Heart Rate',
+  'Walking + Running Distance',
   'Steps',
   'Sleep',
   'Active Energy',
-  'Mindfulness',
+  'Flights Climbed',
   'Blood Glucose',
+  'Heart Rate',
+  'Mindfulness',
   'Resting Heart Rate',
-  'Walking + Running Distance',
   'Exercise Time',
   'Blood Oxygen',
 ];
@@ -163,12 +191,319 @@ const QUICK_ACTION_ICON_BY_TAB: Record<InsightTab, string> = {
   'Blood Glucose': '◈',
 };
 
+let Notifications: typeof import('expo-notifications') | null = null;
+try {
+  // If the current binary was built before expo-notifications was added,
+  // requiring it can fail with missing native module errors.
+  const notificationsModule = require('expo-notifications') as typeof import('expo-notifications');
+  Notifications = notificationsModule;
+  notificationsModule.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+} catch {
+  Notifications = null;
+}
+const QUICK_ACTION_THEME_COLOR_BY_TAB: Record<InsightTab, string> = {
+  'Heart Rate': '#7DA2C7',
+  'Resting Heart Rate': '#7DA2C7',
+  'Heart Rate Variability': '#7DA2C7',
+  'Respiratory Rate': '#7DA2C7',
+  'Blood Oxygen': '#7DA2C7',
+  Steps: '#7CB89B',
+  'Walking + Running Distance': '#7CB89B',
+  'Flights Climbed': '#7CB89B',
+  'Active Energy': '#7CB89B',
+  'Basal Energy': '#7CB89B',
+  'Exercise Time': '#7CB89B',
+  'Stand Time': '#7CB89B',
+  Sleep: '#9B8FC6',
+  Mindfulness: '#9B8FC6',
+  'Body Temperature': '#C7A77D',
+  Weight: '#C7A77D',
+  'VO2 Max': '#7CB89B',
+  'Blood Glucose': '#C7A77D',
+};
+
+function InsightsFavoriteSparkPage({
+  metric,
+  content,
+  pageWidth,
+  theme,
+  iconGlyph,
+}: {
+  metric: InsightTab;
+  content: InsightContent;
+  pageWidth: number;
+  theme: string;
+  iconGlyph: string;
+}) {
+  const points = content.trendPoints ?? [0, 0, 0, 0, 0, 0, 0];
+  const labels = content.trendLabels ?? ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  const chartWidth = Math.max(200, Math.floor(pageWidth));
+  const chartHeight = 96;
+  const graphPaddingX = 10;
+  const graphPaddingY = 12;
+  const max = Math.max(...points, 1);
+  const usableWidth = chartWidth - graphPaddingX * 2;
+  const usableHeight = chartHeight - graphPaddingY * 2;
+  const stepX = points.length > 1 ? usableWidth / (points.length - 1) : usableWidth;
+  const coords = points.map((value, idx) => {
+    const x = graphPaddingX + idx * stepX;
+    const y = graphPaddingY + (1 - value / max) * usableHeight;
+    return { x, y, value };
+  });
+  const pathD = coords.map((pt, idx) => `${idx === 0 ? 'M' : 'L'} ${pt.x} ${pt.y}`).join(' ');
+  const midY = graphPaddingY + usableHeight / 2;
+
+  return (
+    <View style={{ width: pageWidth, paddingVertical: 4 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+        <Text style={{ fontSize: 22, color: theme }}>{iconGlyph}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: '#93c5fd', fontSize: 10, fontWeight: '800', letterSpacing: 1 }}>FAVORITE</Text>
+          <Text style={{ color: '#f8fafc', fontSize: 16, fontWeight: '800', letterSpacing: -0.2 }}>{metric}</Text>
+        </View>
+        <Text style={{ color: '#94a3b8', fontSize: 11, fontWeight: '700' }}>{content.trendUnit}</Text>
+      </View>
+      <Svg height={chartHeight} viewBox={`0 0 ${chartWidth} ${chartHeight}`} width="100%">
+        <Path
+          d={`M ${graphPaddingX} ${chartHeight - graphPaddingY} L ${chartWidth - graphPaddingX} ${chartHeight - graphPaddingY}`}
+          stroke="rgba(148,163,184,0.16)"
+          strokeWidth={1}
+        />
+        <Path
+          d={`M ${graphPaddingX} ${midY} L ${chartWidth - graphPaddingX} ${midY}`}
+          stroke="rgba(148,163,184,0.1)"
+          strokeDasharray="4 6"
+          strokeWidth={1}
+        />
+        <Path d={pathD} fill="none" stroke={theme} strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} />
+        {coords.map((pt, idx) => (
+          <Circle key={`${metric}-spark-${idx}`} cx={pt.x} cy={pt.y} fill="#0f172a" r={3.2} stroke={theme} strokeWidth={1.8} />
+        ))}
+      </Svg>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
+        {labels.map((label, idx) => (
+          <View key={`${metric}-spark-lbl-${idx}`} style={{ flex: 1, alignItems: 'center' }}>
+            <Text style={{ color: '#e2e8f0', fontSize: 10, fontWeight: '800' }}>
+              {points[idx] > 0 ? String(points[idx].toFixed(1)).replace(/\.0$/, '') : '0'}
+            </Text>
+            <Text style={{ color: '#64748b', fontSize: 9, fontWeight: '700', marginTop: 2 }}>{label}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function moveDashboardQuickMetric(list: InsightTab[], from: number, to: number): InsightTab[] {
+  if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) {
+    return list;
+  }
+  const next = [...list];
+  const [removed] = next.splice(from, 1);
+  next.splice(to, 0, removed);
+  return next;
+}
+
+type DashboardQuickActionSlotProps = {
+  metric: InsightTab;
+  index: number;
+  slotWidth: number;
+  draggingIndexSV: SharedValue<number>;
+  dragTranslationSV: SharedValue<number>;
+  slotWidthSV: SharedValue<number>;
+  onPress: () => void;
+  onDragCommit: (fromIndex: number, translationX: number) => void;
+};
+
+function DashboardQuickActionSlot({
+  metric,
+  index,
+  slotWidth,
+  draggingIndexSV,
+  dragTranslationSV,
+  slotWidthSV,
+  onPress,
+  onDragCommit,
+}: DashboardQuickActionSlotProps) {
+  const onPressJS = useCallback(() => {
+    onPress();
+  }, [onPress]);
+
+  const commitJS = useCallback(
+    (fromIdx: number, dx: number) => {
+      if (slotWidth <= 0) {
+        return;
+      }
+      onDragCommit(fromIdx, dx);
+    },
+    [slotWidth, onDragCommit],
+  );
+
+  const gesture = useMemo(() => {
+    const tap = Gesture.Tap()
+      .maxDuration(380)
+      .onEnd((_e, success) => {
+        'worklet';
+        if (success) {
+          runOnJS(onPressJS)();
+        }
+      });
+
+    const pan = Gesture.Pan()
+      .activateAfterLongPress(450)
+      .onStart(() => {
+        draggingIndexSV.value = index;
+      })
+      .onUpdate((e) => {
+        dragTranslationSV.value = e.translationX;
+      })
+      .onEnd((e, success) => {
+        if (success) {
+          runOnJS(commitJS)(index, e.translationX);
+        }
+      })
+      .onFinalize(() => {
+        draggingIndexSV.value = -1;
+        dragTranslationSV.value = 0;
+      });
+
+    return Gesture.Exclusive(tap, pan);
+  }, [commitJS, dragTranslationSV, draggingIndexSV, index, onPressJS]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    const from = draggingIndexSV.value;
+    const dx = dragTranslationSV.value;
+    const w = slotWidthSV.value;
+    if (from < 0 || w <= 0) {
+      return { transform: [{ translateX: 0 }, { scale: 1 }], zIndex: 0 };
+    }
+    const t = dx / w;
+    let translate = 0;
+    let z = 0;
+    let scale = 1;
+    if (index === from) {
+      translate = dx;
+      z = 8;
+      scale = 1.06;
+    } else if (t > 0) {
+      const k = index - from;
+      if (k >= 1) {
+        const step = Math.min(Math.max(t - (k - 1), 0), 1);
+        translate = -step * w;
+      }
+    } else if (t < 0) {
+      const k = from - index;
+      if (k >= 1) {
+        const u = -t;
+        const step = Math.min(Math.max(u - (k - 1), 0), 1);
+        translate = step * w;
+      }
+    }
+    return {
+      transform: [{ translateX: translate }, { scale }],
+      zIndex: z,
+    };
+  }, [dragTranslationSV, draggingIndexSV, index, slotWidthSV]);
+
+  return (
+    <GestureDetector gesture={gesture}>
+      <Reanimated.View
+        accessibilityHint="Long press, then drag sideways to reorder. Tap to open in Insights."
+        accessibilityLabel={`Quick action ${metric}`}
+        accessibilityRole="button"
+        style={[styles.quickItem, animatedStyle]}
+      >
+        <View style={[styles.quickIcon, { borderColor: QUICK_ACTION_THEME_COLOR_BY_TAB[metric] }]}>
+          <Text style={styles.quickIconGlyph}>{QUICK_ACTION_ICON_BY_TAB[metric]}</Text>
+        </View>
+        <Text numberOfLines={1} style={styles.quickText}>
+          {metric}
+        </Text>
+      </Reanimated.View>
+    </GestureDetector>
+  );
+}
+
+type DashboardQuickActionMetricsRowProps = {
+  metrics: InsightTab[];
+  onReorder: (next: InsightTab[]) => void;
+  onMetricPress: (metric: InsightTab) => void;
+};
+
+function DashboardQuickActionMetricsRow({ metrics, onReorder, onMetricPress }: DashboardQuickActionMetricsRowProps) {
+  const [slotWidth, setSlotWidth] = useState(0);
+  const slotWidthSV = useSharedValue(0);
+  const draggingIndexSV = useSharedValue(-1);
+  const dragTranslationSV = useSharedValue(0);
+  const metricsRef = useRef(metrics);
+  metricsRef.current = metrics;
+
+  const handleDragCommit = useCallback(
+    (fromIndex: number, translationX: number) => {
+      const list = metricsRef.current;
+      const w = slotWidth;
+      if (w <= 0 || list.length === 0) {
+        return;
+      }
+      const delta = Math.round(translationX / w);
+      const toIndex = Math.max(0, Math.min(fromIndex + delta, list.length - 1));
+      if (toIndex !== fromIndex) {
+        onReorder(moveDashboardQuickMetric(list, fromIndex, toIndex));
+      }
+    },
+    [slotWidth, onReorder],
+  );
+
+  return (
+    <View
+      onLayout={(e) => {
+        const w = e.nativeEvent.layout.width;
+        const sw = metrics.length > 0 ? w / metrics.length : 0;
+        setSlotWidth(sw);
+        slotWidthSV.value = sw;
+      }}
+      style={styles.quickRow}
+    >
+      {metrics.map((metric, index) => (
+        <DashboardQuickActionSlot
+          key={metric}
+          dragTranslationSV={dragTranslationSV}
+          draggingIndexSV={draggingIndexSV}
+          index={index}
+          metric={metric}
+          onDragCommit={handleDragCommit}
+          onPress={() => onMetricPress(metric)}
+          slotWidth={slotWidth}
+          slotWidthSV={slotWidthSV}
+        />
+      ))}
+    </View>
+  );
+}
+
 const ACTIVITY = [
   { label: 'STEPS', value: '6,842', fill: 85, color: '#22c55e' },
   { label: 'SLEEP', value: '7h 15m', fill: 95, color: '#22c55e' },
   { label: 'MEDS', value: '2/2', fill: 100, color: '#22c55e' },
   { label: 'WATER', value: '6gl', fill: 75, color: '#3b82f6' },
 ];
+
+type DashboardValueDriftToggles = {
+  glucose: boolean;
+  stress: boolean;
+  heartRateCard: boolean;
+  steps: boolean;
+  sleep: boolean;
+  meds: boolean;
+  water: boolean;
+};
 
 const NAV_ITEMS = [
   { label: 'Dashboard', icon: '◉' },
@@ -178,10 +513,11 @@ const NAV_ITEMS = [
   { label: 'Goals', icon: '◎' },
 ];
 
-const MAP_LAYERS = ['Indoor', 'Recovery', 'Energy', 'Stress Reset'] as const;
-type MapLayer = (typeof MAP_LAYERS)[number];
+const MAP_LAYERS = ['All', 'Ticketmaster', 'Eventbrite'] as const;
+type MapLayerFilter = (typeof MAP_LAYERS)[number];
+type MapLayer = Exclude<MapLayerFilter, 'All'>;
 
-const GOALS_TABS = ['Active', 'Challenges', 'Communities'] as const;
+const GOALS_TABS = ['Active', 'Communities', 'Challenges'] as const;
 type GoalsTab = (typeof GOALS_TABS)[number];
 const CHALLENGE_FILTERS = ['All', 'Personal', 'Community'] as const;
 type ChallengeFilter = (typeof CHALLENGE_FILTERS)[number];
@@ -200,7 +536,7 @@ const GOALS_CHALLENGES: GoalChallenge[] = [
 ];
 
 const COMMUNITY_DISCOVERY = [
-  { name: 'Sleep Better Crew', city: 'Los Angeles, CA', members: '16,302 members' },
+  { name: 'LAHacks2026', city: 'Los Angeles, CA', members: '16,302 members' },
   { name: 'Mindful Minutes', city: 'Los Angeles, CA', members: '36,285 members' },
   { name: 'Hydration Squad', city: 'Los Angeles, CA', members: '20,217 members' },
   { name: 'Campus Recovery Club', city: 'Los Angeles, CA', members: '19,784 members' },
@@ -227,6 +563,254 @@ const COMMUNITY_PROGRESS_POSTS = [
   { id: '2', author: 'Ethan K.', time: 'Yesterday', caption: 'Morning walk streak keeps growing. 7 days in a row.', imageLabel: 'Morning walk snapshot' },
   { id: '3', author: 'Nora P.', time: '2d ago', caption: 'Sleep score improved after reducing caffeine at night.', imageLabel: 'Sleep stats screenshot' },
 ] as const;
+
+type ProgressPostStatus = 'processing' | 'ready' | 'failed';
+type MediaVariants = {
+  originalUrl: string;
+  feedUrl: string;
+  thumbUrl: string;
+};
+type AristaEventContext = {
+  name?: string;
+  venue?: string;
+  startTime?: string;
+  endTime?: string;
+  confidence?: number;
+  sourceUrl?: string;
+};
+type AristaResourceContext = {
+  type?: string;
+  name?: string;
+  distanceMeters?: number;
+  confidence?: number;
+};
+type AristaContextPayload = {
+  eventDetected?: boolean;
+  event?: AristaEventContext | null;
+  resources?: AristaResourceContext[];
+  sourceMeta?: {
+    primarySource?: string;
+    sourceReliability?: number;
+    scoringVersion?: string;
+  };
+};
+type CommunityEventItem = {
+  id: string;
+  month: string;
+  day: string;
+  dow: string;
+  title: string;
+  meta: string;
+  rsvp: string;
+  sourceUrl?: string | null;
+  source?: string | null;
+  venue?: string | null;
+  /** Full street + locality from provider when available (Ticketmaster / Eventbrite venues). */
+  address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+};
+type MapScreenPin = {
+  id: string;
+  latitude: number;
+  longitude: number;
+  title: string;
+  subtitle: string;
+  pinColor?: string;
+  linkedEvent?: CommunityEventItem;
+};
+type ProgressBoardPost = {
+  id: string;
+  author: string;
+  time: string;
+  caption: string;
+  imageLabel: string;
+  imageUrl: string | null;
+  mediaPublicId: string | null;
+  mediaVariants: MediaVariants | null;
+  mediaType: 'image';
+  status: ProgressPostStatus;
+  processingError: string | null;
+};
+
+const CLOUDINARY_CLOUD_NAME = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME ?? '';
+const CLOUDINARY_UPLOAD_PRESET = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET ?? '';
+const COMMUNITY_SPOTLIGHT_IMAGE_URL = process.env.EXPO_PUBLIC_COMMUNITY_SPOTLIGHT_IMAGE_URL?.trim() ?? '';
+const ARISTA_CONTEXT_URL = process.env.EXPO_PUBLIC_ARISTA_CONTEXT_URL ?? '';
+const ARISTA_COMMUNITY_EVENTS_URL = process.env.EXPO_PUBLIC_ARISTA_COMMUNITY_EVENTS_URL
+  ?? (ARISTA_CONTEXT_URL.includes('/nearbyEventContext')
+    ? ARISTA_CONTEXT_URL.replace('/nearbyEventContext', '/communityEvents')
+    : '');
+const FIREBASE_CONFIG = {
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY ?? '',
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN ?? '',
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? '',
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET ?? '',
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? '',
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID ?? '',
+};
+
+const hasFirebaseConfig = Object.values(FIREBASE_CONFIG).every((value) => value.trim().length > 0);
+const hasCloudinaryConfig = CLOUDINARY_CLOUD_NAME.trim().length > 0 && CLOUDINARY_UPLOAD_PRESET.trim().length > 0;
+
+const getFirestoreInstance = (): Firestore | null => {
+  if (!hasFirebaseConfig) {
+    return null;
+  }
+  const app = getApps().length > 0 ? getApp() : initializeApp(FIREBASE_CONFIG);
+  return getFirestore(app);
+};
+
+const cloudinaryUploadEndpoint = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
+const cloudinaryDeliveryBase = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/upload`;
+
+const deriveImageName = (uri: string) => {
+  const lastSegment = uri.split('/').pop();
+  if (lastSegment && lastSegment.includes('.')) {
+    return lastSegment;
+  }
+  return `post-${Date.now()}.jpg`;
+};
+
+const uploadImageToCloudinary = async (imageUri: string): Promise<{ secureUrl: string; publicId: string }> => {
+  if (!hasCloudinaryConfig) {
+    throw new Error('Cloudinary is not configured. Set EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME and EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET.');
+  }
+  const formData = new FormData();
+  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  formData.append('file', {
+    uri: imageUri,
+    name: deriveImageName(imageUri),
+    type: 'image/jpeg',
+  } as unknown as Blob);
+  const response = await fetch(cloudinaryUploadEndpoint, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Cloudinary upload failed: ${errorText}`);
+  }
+  const json = await response.json() as { secure_url?: string; public_id?: string };
+  if (!json.secure_url || !json.public_id) {
+    throw new Error('Cloudinary upload response is missing secure_url/public_id.');
+  }
+  return {
+    secureUrl: json.secure_url,
+    publicId: json.public_id,
+  };
+};
+
+const buildCloudinaryImageVariants = (publicId: string, originalUrl: string): MediaVariants => {
+  const encodedPublicId = publicId
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  return {
+    originalUrl,
+    feedUrl: `${cloudinaryDeliveryBase}/f_auto,q_auto,c_fill,w_1080,h_1080/${encodedPublicId}`,
+    thumbUrl: `${cloudinaryDeliveryBase}/f_auto,q_auto,c_fill,g_auto,w_360,h_360/${encodedPublicId}`,
+  };
+};
+
+const fetchAristaContext = async (payload: {
+  lat: number;
+  lon: number;
+  timestamp: string;
+  communityId: string;
+}): Promise<AristaContextPayload | null> => {
+  if (!ARISTA_CONTEXT_URL.trim()) {
+    return null;
+  }
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const response = await fetch(ARISTA_CONTEXT_URL, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!response.ok) {
+      return null;
+    }
+    const json = await response.json() as AristaContextPayload;
+    return json;
+  } catch {
+    return null;
+  }
+};
+
+const fetchAristaCommunityEvents = async (payload: {
+  lat: number;
+  lon: number;
+  communityId: string;
+  tab: 'Upcoming' | 'Past';
+}): Promise<CommunityEventItem[] | null> => {
+  if (!ARISTA_COMMUNITY_EVENTS_URL.trim()) {
+    return null;
+  }
+  try {
+    const params = new URLSearchParams({
+      lat: String(payload.lat),
+      lon: String(payload.lon),
+      communityId: payload.communityId,
+      tab: payload.tab,
+    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const response = await fetch(`${ARISTA_COMMUNITY_EVENTS_URL}?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!response.ok) {
+      return null;
+    }
+    const json = await response.json() as { events?: Array<CommunityEventItem> };
+    if (!Array.isArray(json.events)) {
+      return [];
+    }
+    return json.events.map((event) => ({
+      id: event.id,
+      month: event.month,
+      day: event.day,
+      dow: event.dow,
+      title: event.title,
+      meta: event.meta,
+      rsvp: event.rsvp,
+      sourceUrl: event.sourceUrl ?? null,
+      source: event.source ?? null,
+      venue: event.venue ?? null,
+      address: typeof event.address === 'string' && event.address.trim().length > 0 ? event.address.trim() : null,
+      latitude: typeof event.latitude === 'number' && Number.isFinite(event.latitude) ? event.latitude : null,
+      longitude: typeof event.longitude === 'number' && Number.isFinite(event.longitude) ? event.longitude : null,
+    }));
+  } catch {
+    return null;
+  }
+};
+
+const formatEventSourceName = (source?: string | null) => {
+  const normalized = (source ?? '').trim().toLowerCase();
+  if (normalized === 'ticketmaster') {
+    return 'Ticketmaster';
+  }
+  if (normalized === 'eventbrite') {
+    return 'Eventbrite';
+  }
+  if (!normalized) {
+    return 'Ticketmaster';
+  }
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
 
 const COMMUNITY_OVERVIEW_DESCRIPTION =
   'This community helps members build consistent wellness habits through shared accountability, weekly events, and progress updates.';
@@ -348,23 +932,8 @@ const healthKit = rawHealthKit as {
   ) => void;
 };
 
-const COMMUNITY_UPCOMING_EVENTS = [
-  { id: 'u1', month: 'Apr', day: '27', dow: 'Sun', title: 'Beach Recovery Walk', meta: 'Social · 2400 Ocean Front Walk, Venice', rsvp: "18 RSVP'd" },
-  { id: 'u2', month: 'May', day: '02', dow: 'Fri', title: 'Hydration Accountability Meetup', meta: 'Community · 600 W 7th St, Los Angeles', rsvp: "31 RSVP'd" },
-  { id: 'u3', month: 'May', day: '09', dow: 'Fri', title: 'Morning Mobility Session', meta: 'Wellness · 200 Santa Monica Pier, Santa Monica', rsvp: "24 RSVP'd" },
-  { id: 'u4', month: 'May', day: '14', dow: 'Wed', title: 'Community 5k Checkpoint', meta: 'Run Club · Exposition Park, Los Angeles', rsvp: "42 RSVP'd" },
-  { id: 'u5', month: 'May', day: '21', dow: 'Wed', title: 'Night Wind-Down Walk', meta: 'Mindfulness · Echo Park Lake, Los Angeles', rsvp: "16 RSVP'd" },
-  { id: 'u6', month: 'May', day: '28', dow: 'Wed', title: 'Rest + Stretch Session', meta: 'Recovery · 151 S Grand Ave, Los Angeles', rsvp: "27 RSVP'd" },
-] as const;
-
-const COMMUNITY_PAST_EVENTS = [
-  { id: 'p1', month: 'Apr', day: '12', dow: 'Sat', title: 'Sunrise Run + Breathwork', meta: 'Social · Griffith Park, Los Angeles', rsvp: "46 RSVP'd" },
-  { id: 'p2', month: 'Mar', day: '29', dow: 'Sat', title: 'Sleep Score Sprint Week Wrap', meta: 'Community · UCLA Campus, Westwood', rsvp: "39 RSVP'd" },
-  { id: 'p3', month: 'Mar', day: '15', dow: 'Sat', title: 'Stress Reset Outdoor Circle', meta: 'Wellness · 200 N Grand Ave, Los Angeles', rsvp: "27 RSVP'd" },
-  { id: 'p4', month: 'Mar', day: '08', dow: 'Sat', title: 'Hydration Week Kickoff', meta: 'Community · 900 W Olympic Blvd, Los Angeles', rsvp: "52 RSVP'd" },
-  { id: 'p5', month: 'Feb', day: '24', dow: 'Mon', title: 'Evening Mobility Flow', meta: 'Recovery · Runyon Canyon, Los Angeles', rsvp: "21 RSVP'd" },
-  { id: 'p6', month: 'Feb', day: '11', dow: 'Tue', title: 'Mindful Miles Meetup', meta: 'Social · Dockweiler Beach, Los Angeles', rsvp: "33 RSVP'd" },
-] as const;
+const COMMUNITY_UPCOMING_EVENTS: CommunityEventItem[] = [];
+const COMMUNITY_PAST_EVENTS: CommunityEventItem[] = [];
 
 function ActivityMiniIcon({ label }: { label: string }) {
   if (label === 'STEPS') {
@@ -395,25 +964,147 @@ function ActivityMiniIcon({ label }: { label: string }) {
   );
 }
 
+function InsightsBulbIcon({ active }: { active: boolean }) {
+  const color = active ? '#3b82f6' : '#52525b';
+  return (
+    <Svg height={26} viewBox="0 0 24 24" width={26}>
+      <Path
+        d="M12 3.2a6.4 6.4 0 0 0-4.3 11.1c.9.8 1.6 1.9 1.9 3h4.8c.3-1.1 1-2.2 1.9-3A6.4 6.4 0 0 0 12 3.2Z"
+        fill="none"
+        stroke={color}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.8}
+      />
+      <Path
+        d="M9.7 19h4.6M10.3 21h3.4"
+        fill="none"
+        stroke={color}
+        strokeLinecap="round"
+        strokeWidth={1.8}
+      />
+    </Svg>
+  );
+}
+
 export default function App() {
+  const { width: windowWidth } = useWindowDimensions();
+  const starredGalleryPageWidth = Math.max(0, windowWidth - 32);
+  const mapViewRef = useRef<MapView | null>(null);
+  const starredGalleryScrollRef = useRef<ScrollView | null>(null);
+  const starredGalleryNextScrollAnimatedRef = useRef(false);
+  const starredGallerySuppressAutoUntilRef = useRef(0);
+  /** When true, skip programmatic gallery scrollTo so user-driven scroll can update dots without fighting layout. */
+  const suppressStarredGalleryLayoutScrollRef = useRef(false);
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [healthScore, setHealthScore] = useState(72);
   const [demoScoreDriftEnabled, setDemoScoreDriftEnabled] = useState(false);
   const [demoFastDriftEnabled, setDemoFastDriftEnabled] = useState(false);
+  const [demoAlertEnabled, setDemoAlertEnabled] = useState(false);
+  const [demoToolsDropdownOpen, setDemoToolsDropdownOpen] = useState(false);
+  const [demoDashboardValueDrift, setDemoDashboardValueDrift] = useState<DashboardValueDriftToggles>({
+    glucose: false,
+    stress: false,
+    heartRateCard: false,
+    steps: false,
+    sleep: false,
+    meds: false,
+    water: false,
+  });
+  const [glucoseValue, setGlucoseValue] = useState(142);
+  const [stressValue, setStressValue] = useState(78);
+  const [heartRateCardValue, setHeartRateCardValue] = useState(68);
+  const [activitySteps, setActivitySteps] = useState(6842);
+  const [activitySleepMinutes, setActivitySleepMinutes] = useState(435);
+  const [activityMedsTaken, setActivityMedsTaken] = useState(2);
+  const [activityWaterGlasses, setActivityWaterGlasses] = useState(6);
   const [useDeviceLocation, setUseDeviceLocation] = useState(false);
   const [locationStatus, setLocationStatus] = useState<'off' | 'granted' | 'denied'>('off');
   const [locationCoords, setLocationCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [mapLocationStatus, setMapLocationStatus] = useState<'idle' | 'granted' | 'denied'>('idle');
   const [mapCoords, setMapCoords] = useState<{ lat: number; lon: number } | null>(null);
-  const [activeMapLayer, setActiveMapLayer] = useState<MapLayer>('Indoor');
+  const [activeMapLayer, setActiveMapLayer] = useState<MapLayerFilter | null>('All');
   const [activeInsightTab, setActiveInsightTab] = useState<InsightTab | null>(null);
   const [dashboardQuickMetrics, setDashboardQuickMetrics] = useState<InsightTab[]>(() =>
     QUICK_ACTION_METRIC_OPTIONS.slice(0, DASHBOARD_QUICK_ACTION_SLOTS),
   );
   const [quickMetricSearchQuery, setQuickMetricSearchQuery] = useState('');
+  const [starredGalleryIndex, setStarredGalleryIndex] = useState(0);
+
+  const insightsGalleryScrollPages = useMemo(() => {
+    const m = dashboardQuickMetrics;
+    const n = m.length;
+    if (n === 0) {
+      return [] as { metric: InsightTab; pageKey: string }[];
+    }
+    if (n === 1) {
+      return [{ metric: m[0]!, pageKey: 'gallery-solo' }];
+    }
+    return [
+      { metric: m[n - 1]!, pageKey: 'gallery-clone-before' },
+      ...m.map((metric) => ({ metric, pageKey: `gallery-slot-${metric}` })),
+      { metric: m[0]!, pageKey: 'gallery-clone-after' },
+    ];
+  }, [dashboardQuickMetrics]);
+
+  const onInsightsGalleryScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const w = starredGalleryPageWidth;
+      if (w <= 0) {
+        return;
+      }
+      const n = dashboardQuickMetrics.length;
+      if (n <= 1) {
+        setStarredGalleryIndex(0);
+        return;
+      }
+      const rel = e.nativeEvent.contentOffset.x / w;
+      let k = Math.round(rel) - 1;
+      if (k < 0) {
+        k = n - 1;
+      } else if (k >= n) {
+        k = 0;
+      }
+      setStarredGalleryIndex((prev) => (prev === k ? prev : k));
+    },
+    [dashboardQuickMetrics.length, starredGalleryPageWidth],
+  );
+
+  const onInsightsGalleryMomentumEnd = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      suppressStarredGalleryLayoutScrollRef.current = false;
+      const w = starredGalleryPageWidth;
+      if (w <= 0) {
+        return;
+      }
+      const n = dashboardQuickMetrics.length;
+      if (n <= 1) {
+        setStarredGalleryIndex(0);
+        return;
+      }
+      const p = Math.round(e.nativeEvent.contentOffset.x / w);
+      if (p === 0) {
+        setStarredGalleryIndex(n - 1);
+        requestAnimationFrame(() => {
+          starredGalleryScrollRef.current?.scrollTo({ x: n * w, animated: false });
+        });
+        return;
+      }
+      if (p === n + 1) {
+        setStarredGalleryIndex(0);
+        requestAnimationFrame(() => {
+          starredGalleryScrollRef.current?.scrollTo({ x: w, animated: false });
+        });
+        return;
+      }
+      setStarredGalleryIndex(p - 1);
+    },
+    [dashboardQuickMetrics.length, starredGalleryPageWidth],
+  );
+
   const [expandedInsightGroups, setExpandedInsightGroups] = useState<Record<string, boolean>>(
-    () => INSIGHT_GROUPS.reduce((acc, group) => ({ ...acc, [group.id]: true }), {}),
+    () => INSIGHT_GROUPS.reduce((acc, group) => ({ ...acc, [group.id]: false }), {}),
   );
   const [insightContentByTab, setInsightContentByTab] = useState<Record<InsightTab, InsightContent>>(INSIGHTS_TAB_CONTENT);
   const [healthKitStatus, setHealthKitStatus] = useState<'idle' | 'ready' | 'denied' | 'unsupported'>('idle');
@@ -430,9 +1121,22 @@ export default function App() {
   const [selectedJoinedCommunityName, setSelectedJoinedCommunityName] = useState<string | null>(null);
   const [selectedCommunityAction, setSelectedCommunityAction] = useState('Progress Board');
   const [eventsTab, setEventsTab] = useState<'Upcoming' | 'Past'>('Upcoming');
+  const [communityEventsByTab, setCommunityEventsByTab] = useState<Record<'Upcoming' | 'Past', CommunityEventItem[]>>({
+    Upcoming: [...COMMUNITY_UPCOMING_EVENTS],
+    Past: [...COMMUNITY_PAST_EVENTS],
+  });
+  const [loadingCommunityEvents, setLoadingCommunityEvents] = useState(false);
+  const [mapDiscoveryEvents, setMapDiscoveryEvents] = useState<CommunityEventItem[]>([]);
+  const [mapDiscoveryEventsLoading, setMapDiscoveryEventsLoading] = useState(false);
   const [isInteractingWithEventsList, setIsInteractingWithEventsList] = useState(false);
   const [showOverviewPopup, setShowOverviewPopup] = useState(false);
   const [showInvitePopup, setShowInvitePopup] = useState(false);
+  const [showCreateProgressPostModal, setShowCreateProgressPostModal] = useState(false);
+  const [createPostCaption, setCreatePostCaption] = useState('');
+  const [createPostImageUri, setCreatePostImageUri] = useState<string | null>(null);
+  const [isPublishingProgressPost, setIsPublishingProgressPost] = useState(false);
+  const [communityCustomPostsByName, setCommunityCustomPostsByName] = useState<Record<string, ProgressBoardPost[]>>({});
+  const [showAlertsScreen, setShowAlertsScreen] = useState(false);
   const [inviteContacts, setInviteContacts] = useState<InviteContact[]>([]);
   const [loadingInviteContacts, setLoadingInviteContacts] = useState(false);
   const [startupPermissionsRequested, setStartupPermissionsRequested] = useState(false);
@@ -440,8 +1144,87 @@ export default function App() {
   const [weatherLabel, setWeatherLabel] = useState('Sunny');
   const [foodSuggestionCollapsed, setFoodSuggestionCollapsed] = useState(false);
   const scoreDirectionRef = useRef<1 | -1>(1);
+  const previousAlertDemoEnabledRef = useRef(false);
+  const heartPulseAnim = useRef(new Animated.Value(0)).current;
+  const alertBadgeBounceAnim = useRef(new Animated.Value(0)).current;
   const displayScore = Math.round(healthScore);
   const scorePresentation = getScorePresentation(displayScore);
+  const alertCount = demoAlertEnabled ? 3 : 0;
+  const allDemoToolsEnabled =
+    demoScoreDriftEnabled && Object.values(demoDashboardValueDrift).every(Boolean);
+  const alertItems = demoAlertEnabled
+    ? [
+        { id: 'a1', title: 'Abnormal Glucose', detail: 'Glucose measured at 192 mg/dL.', severity: 'High' },
+        { id: 'a2', title: 'Elevated Stress', detail: 'Stress index reached 84/100.', severity: 'High' },
+        { id: 'a3', title: 'Abnormal Heart Rate', detail: 'Resting heart rate detected at 104 bpm.', severity: 'High' },
+      ]
+    : [];
+  const toggleDashboardValueDrift = (key: keyof DashboardValueDriftToggles) => {
+    setDemoDashboardValueDrift((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+  const toggleAllDemoTools = () => {
+    const next = !allDemoToolsEnabled;
+    setDemoScoreDriftEnabled(next);
+    setDemoDashboardValueDrift({
+      glucose: next,
+      stress: next,
+      heartRateCard: next,
+      steps: next,
+      sleep: next,
+      meds: next,
+      water: next,
+    });
+  };
+  const dashboardMetrics = [
+    {
+      label: 'GLUCOSE',
+      value: Math.round(glucoseValue).toString(),
+      unit: 'MG/DL',
+      status: glucoseValue >= 170 ? 'HIGH' : glucoseValue <= 85 ? 'LOW' : 'NORMAL',
+      statusColor: glucoseValue >= 170 ? '#ef4444' : glucoseValue <= 85 ? '#f59e0b' : '#7CB89B',
+    },
+    {
+      label: 'STRESS LEVEL',
+      value: Math.round(stressValue).toString(),
+      unit: '/100',
+      status: stressValue >= 70 ? 'HIGH' : stressValue <= 35 ? 'LOW' : 'NORMAL',
+      statusColor: stressValue >= 70 ? '#f97316' : stressValue <= 35 ? '#7DA2C7' : '#7CB89B',
+    },
+    {
+      label: 'HEART RATE',
+      value: Math.round(heartRateCardValue).toString(),
+      unit: 'BPM',
+      status: heartRateCardValue >= 95 ? 'HIGH' : heartRateCardValue <= 52 ? 'LOW' : 'NORMAL',
+      statusColor: heartRateCardValue >= 95 ? '#f59e0b' : heartRateCardValue <= 52 ? '#7DA2C7' : '#7CB89B',
+    },
+  ];
+  const sleepMinutesForDisplay = Math.min(activitySleepMinutes, 9 * 60 + 59);
+  const dashboardActivity = [
+    {
+      label: 'STEPS',
+      value: activitySteps.toLocaleString(),
+      fill: Math.max(8, Math.min(100, Math.round((activitySteps / 8000) * 100))),
+      color: '#7CB89B',
+    },
+    {
+      label: 'SLEEP',
+      value: `${Math.floor(sleepMinutesForDisplay / 60)}h ${String(sleepMinutesForDisplay % 60).padStart(2, '0')}m`,
+      fill: Math.max(8, Math.min(100, Math.round((sleepMinutesForDisplay / (8 * 60)) * 100))),
+      color: '#9B8FC6',
+    },
+    {
+      label: 'MEDS',
+      value: `${activityMedsTaken}/2`,
+      fill: Math.max(8, Math.min(100, Math.round((activityMedsTaken / 2) * 100))),
+      color: '#7DA2C7',
+    },
+    {
+      label: 'WATER',
+      value: `${activityWaterGlasses}gl`,
+      fill: Math.max(8, Math.min(100, Math.round((activityWaterGlasses / 8) * 100))),
+      color: '#C7A77D',
+    },
+  ];
   const centerX = 160;
   const centerY = 174;
   const startDeg = 205;
@@ -476,41 +1259,99 @@ export default function App() {
   const rightX = baseCenterX - perpX * arrowHalfWidth;
   const rightY = baseCenterY - perpY * arrowHalfWidth;
 
-  const mapLayerOffsets: Record<MapLayer, Array<{ dLat: number; dLon: number; title: string; subtitle: string }>> = {
-    Indoor: [
-      { dLat: 0.0012, dLon: -0.0014, title: 'Indoor Gym', subtitle: 'Best for AQI-safe movement' },
-      { dLat: -0.0011, dLon: 0.0015, title: 'Hydration Station', subtitle: 'Quick refill stop' },
-    ],
-    Recovery: [
-      { dLat: 0.0015, dLon: 0.0008, title: 'Quiet Study Lounge', subtitle: 'Low-stimulus recovery spot' },
-      { dLat: -0.0012, dLon: -0.0009, title: 'Wellness Center', subtitle: 'Recovery-focused support' },
-    ],
-    Energy: [
-      { dLat: 0.001, dLon: 0.0014, title: 'Healthy Dining', subtitle: 'Balanced meal options' },
-      { dLat: -0.0014, dLon: 0.001, title: 'Campus Walk Loop', subtitle: 'Quick energy boost route' },
-    ],
-    'Stress Reset': [
-      { dLat: 0.0009, dLon: -0.0012, title: 'Meditation Room', subtitle: '2-min breathing reset' },
-      { dLat: -0.001, dLon: -0.0014, title: 'Garden Bench', subtitle: 'Low-noise decompression' },
-    ],
+  const resolveEventProvider = (event: CommunityEventItem): 'ticketmaster' | 'eventbrite' | 'unknown' => {
+    const src = (event.source ?? '').trim().toLowerCase();
+    if (src === 'ticketmaster' || src === 'eventbrite') {
+      return src;
+    }
+    const url = (event.sourceUrl ?? '').toLowerCase();
+    if (url.includes('eventbrite')) {
+      return 'eventbrite';
+    }
+    if (url.includes('ticketmaster')) {
+      return 'ticketmaster';
+    }
+    return 'unknown';
   };
 
-  const mapRecommendations: Array<{
-    id: string;
-    latitude: number;
-    longitude: number;
-    title: string;
-    subtitle: string;
-  }> =
+  const providerPinsFromEvents = (events: CommunityEventItem[], source: 'ticketmaster' | 'eventbrite' | 'both'): MapScreenPin[] => {
+    const list =
+      source === 'both'
+        ? events
+        : events.filter((e) => resolveEventProvider(e) === source);
+    return list
+      .filter(
+        (e) =>
+          typeof e.latitude === 'number' &&
+          typeof e.longitude === 'number' &&
+          Number.isFinite(e.latitude) &&
+          Number.isFinite(e.longitude),
+      )
+      .map((e) => {
+        const provider = resolveEventProvider(e);
+        const pinColor = provider === 'eventbrite' ? '#f97316' : '#0ea5e9';
+        const locationLine = e.address ?? e.meta;
+        return {
+          id: `evt-${provider}-${e.id}`,
+          latitude: e.latitude as number,
+          longitude: e.longitude as number,
+          title: e.title,
+          subtitle: e.venue ? `${e.venue} · ${locationLine}` : locationLine,
+          pinColor,
+          linkedEvent: e,
+        };
+      });
+  };
+  const fixedMapPins: MapScreenPin[] = [
+    {
+      id: 'landmark-pauley-pavilion',
+      latitude: 34.0703,
+      longitude: -118.4468,
+      title: 'Pauley Pavilion',
+      subtitle: 'UCLA events and activity hub',
+      pinColor: '#22c55e',
+    },
+  ];
+
+  const mapRecommendations: MapScreenPin[] =
     mapCoords == null
       ? []
-      : mapLayerOffsets[activeMapLayer as MapLayer].map((item: { dLat: number; dLon: number; title: string; subtitle: string }, idx: number) => ({
-          id: `${activeMapLayer}-${idx}`,
-          latitude: mapCoords.lat + item.dLat,
-          longitude: mapCoords.lon + item.dLon,
-          title: item.title,
-          subtitle: item.subtitle,
-        }));
+      : activeMapLayer == null
+        ? []
+        : activeMapLayer === 'All'
+          ? [...providerPinsFromEvents(mapDiscoveryEvents, 'both'), ...fixedMapPins]
+          : activeMapLayer === 'Ticketmaster'
+            ? [...providerPinsFromEvents(mapDiscoveryEvents, 'ticketmaster'), ...fixedMapPins]
+            : [...providerPinsFromEvents(mapDiscoveryEvents, 'eventbrite'), ...fixedMapPins];
+  const recenterMapToCurrentLocation = async () => {
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setMapLocationStatus('denied');
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const nextCoords = {
+        lat: pos.coords.latitude,
+        lon: pos.coords.longitude,
+      };
+      setMapLocationStatus('granted');
+      setMapCoords(nextCoords);
+      mapViewRef.current?.animateToRegion(
+        {
+          latitude: nextCoords.lat,
+          longitude: nextCoords.lon,
+          latitudeDelta: 0.012,
+          longitudeDelta: 0.012,
+        },
+        500,
+      );
+    } catch {
+      setMapLocationStatus('denied');
+    }
+  };
   const joinedCommunities = COMMUNITY_DISCOVERY.filter((community) => joinedCommunityNames.includes(community.name));
   const selectedJoinedCommunity = selectedJoinedCommunityName
     ? joinedCommunities.find((community) => community.name === selectedJoinedCommunityName) ?? null
@@ -537,6 +1378,25 @@ export default function App() {
   const selectedCommunityShareLink = selectedJoinedCommunity
     ? `https://connectedwellness.app/community/${toShareSlug(selectedJoinedCommunity.name)}?invite=demo2026`
     : null;
+  const displayedEvents = communityEventsByTab[eventsTab];
+  const progressPostsForSelectedCommunity: ProgressBoardPost[] = selectedJoinedCommunity == null
+    ? []
+    : [
+        ...(communityCustomPostsByName[selectedJoinedCommunity.name] ?? []),
+        ...COMMUNITY_PROGRESS_POSTS.map((post) => ({
+          id: `seed-${post.id}`,
+          author: post.author,
+          time: post.time,
+          caption: post.caption,
+          imageLabel: post.imageLabel,
+          imageUrl: null,
+          mediaPublicId: null,
+          mediaVariants: null,
+          mediaType: 'image' as const,
+          status: 'ready' as const,
+          processingError: null,
+        })),
+      ];
   const filteredQuickMetricOptions = QUICK_ACTION_METRIC_OPTIONS.filter((metric) => {
     const query = quickMetricSearchQuery.trim().toLowerCase();
     if (!query) {
@@ -595,6 +1455,174 @@ export default function App() {
     setShowCreatePersonalChallengeModal(false);
   };
 
+  const pickProgressPostImage = async (source: 'library' | 'camera') => {
+    try {
+      const result = source === 'camera'
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            // iOS camera editing can crash on some native stacks; keep capture path stable.
+            allowsEditing: false,
+            quality: 0.86,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            quality: 0.86,
+          });
+      if (result.canceled || result.assets.length === 0) {
+        return;
+      }
+      setCreatePostImageUri(result.assets[0].uri);
+      setCreatePostCaption('');
+      setShowCreateProgressPostModal(true);
+    } catch (error) {
+      Alert.alert('Camera error', toErrorText(error));
+    }
+  };
+
+  const launchCreatePostFromSource = async (source: 'library' | 'camera') => {
+    if (source === 'camera') {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (permission.status !== 'granted') {
+        Alert.alert('Camera permission required', 'Enable camera access to take a photo for your post.');
+        return;
+      }
+    } else {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permission.status !== 'granted') {
+        Alert.alert('Photos permission required', 'Enable photo library access to add an image post.');
+        return;
+      }
+    }
+    // Defer presentation so iOS finishes dismissing the alert first.
+    setTimeout(() => {
+      pickProgressPostImage(source).catch((error) => {
+        Alert.alert('Media picker error', toErrorText(error));
+      });
+    }, 250);
+  };
+
+  const openCreateProgressPostModal = async () => {
+    if (!selectedJoinedCommunity) {
+      Alert.alert('Select a community', 'Open a joined community before creating a post.');
+      return;
+    }
+    Alert.alert('Create Post', 'Choose how you want to add a photo.', [
+      {
+        text: 'Take Photo',
+        onPress: () => {
+          launchCreatePostFromSource('camera').catch((error) => {
+            Alert.alert('Camera error', toErrorText(error));
+          });
+        },
+      },
+      {
+        text: 'Photo Library',
+        onPress: () => {
+          launchCreatePostFromSource('library').catch((error) => {
+            Alert.alert('Photo library error', toErrorText(error));
+          });
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const updateCommunityPost = (communityName: string, postId: string, patch: Partial<ProgressBoardPost>) => {
+    setCommunityCustomPostsByName((prev) => {
+      const posts = prev[communityName] ?? [];
+      return {
+        ...prev,
+        [communityName]: posts.map((post) => (post.id === postId ? { ...post, ...patch } : post)),
+      };
+    });
+  };
+
+  const createProgressPost = async () => {
+    if (!selectedJoinedCommunity || !createPostImageUri) {
+      return;
+    }
+    const trimmedCaption = createPostCaption.trim();
+    const resolvedCaption = trimmedCaption.length > 0 ? trimmedCaption : 'Shared a progress photo.';
+    setIsPublishingProgressPost(true);
+    const communityName = selectedJoinedCommunity.name;
+    const localPostId = `local-${Date.now()}`;
+    const optimisticPost: ProgressBoardPost = {
+      id: localPostId,
+      author: 'You',
+      time: 'Just now',
+      caption: resolvedCaption,
+      imageLabel: 'Uploading progress photo...',
+      imageUrl: createPostImageUri,
+      mediaPublicId: null,
+      mediaVariants: null,
+      mediaType: 'image',
+      status: 'processing',
+      processingError: null,
+    };
+    setCommunityCustomPostsByName((prev) => ({
+      ...prev,
+      [communityName]: [optimisticPost, ...(prev[communityName] ?? [])],
+    }));
+    try {
+      const cloudinaryResult = await uploadImageToCloudinary(createPostImageUri);
+      const mediaVariants = buildCloudinaryImageVariants(cloudinaryResult.publicId, cloudinaryResult.secureUrl);
+      const preferredCoords = locationCoords ?? mapCoords;
+      const aristaContext = preferredCoords
+        ? await fetchAristaContext({
+            lat: preferredCoords.lat,
+            lon: preferredCoords.lon,
+            timestamp: new Date().toISOString(),
+            communityId: toShareSlug(communityName),
+          })
+        : null;
+      const db = getFirestoreInstance();
+      if (db) {
+        await addDoc(collection(db, 'progress_posts'), {
+          communityId: toShareSlug(communityName),
+          communityName,
+          authorId: 'demo-user',
+          authorName: 'You',
+          caption: resolvedCaption,
+          mediaUrl: cloudinaryResult.secureUrl,
+          mediaPublicId: cloudinaryResult.publicId,
+          mediaVariants,
+          mediaType: 'image',
+          status: 'processing',
+          eventContext: aristaContext?.event ?? null,
+          resourceContext: aristaContext?.resources ?? [],
+          sourceMeta: aristaContext?.sourceMeta ?? null,
+          autoDescription: '',
+          autoTags: [],
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      updateCommunityPost(communityName, localPostId, {
+        imageLabel: 'Uploaded progress photo',
+        imageUrl: mediaVariants.feedUrl,
+        mediaPublicId: cloudinaryResult.publicId,
+        mediaVariants,
+        status: 'ready',
+      });
+      setShowCreateProgressPostModal(false);
+      setCreatePostCaption('');
+      setCreatePostImageUri(null);
+      if (!hasFirebaseConfig) {
+        Alert.alert('Local-only mode', 'Post uploaded to Cloudinary. Add EXPO_PUBLIC_FIREBASE_* vars to also write Firestore records.');
+      }
+    } catch (error) {
+      updateCommunityPost(communityName, localPostId, {
+        imageLabel: 'Upload failed',
+        status: 'failed',
+        processingError: toErrorText(error),
+      });
+      Alert.alert('Post upload failed', toErrorText(error));
+    } finally {
+      setIsPublishingProgressPost(false);
+    }
+  };
+
   const inviteContactBySms = async (contact: InviteContact) => {
     if (!selectedCommunityShareLink || !selectedJoinedCommunity) {
       return;
@@ -615,6 +1643,82 @@ export default function App() {
     }
     await Linking.openURL(smsUrl);
   };
+
+  const openEventLinkPrompt = (event: CommunityEventItem) => {
+    if (!event.sourceUrl) {
+      Alert.alert('No event link', 'This event does not have an external link yet.');
+      return;
+    }
+    Alert.alert(
+      'Open event link?',
+      `Do you want to open ${event.title} in your browser?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Open',
+          onPress: () => {
+            void Linking.openURL(event.sourceUrl as string).catch(() => {
+              Alert.alert('Unable to open link', 'Please try again in a moment.');
+            });
+          },
+        },
+      ],
+    );
+  };
+
+  useEffect(() => {
+    const loadCommunityEvents = async () => {
+      if (!selectedJoinedCommunity || selectedCommunityAction !== 'Events') {
+        return;
+      }
+      const preferredCoords = mapCoords ?? locationCoords ?? { lat: 34.0689, lon: -118.4452 };
+      setLoadingCommunityEvents(true);
+      const fetched = await fetchAristaCommunityEvents({
+        lat: preferredCoords.lat,
+        lon: preferredCoords.lon,
+        communityId: toShareSlug(selectedJoinedCommunity.name),
+        tab: eventsTab,
+      });
+      if (fetched && fetched.length > 0) {
+        setCommunityEventsByTab((prev) => ({ ...prev, [eventsTab]: fetched }));
+      }
+      setLoadingCommunityEvents(false);
+    };
+    void loadCommunityEvents();
+  }, [selectedJoinedCommunity, selectedCommunityAction, eventsTab, mapCoords, locationCoords]);
+
+  useEffect(() => {
+    if (activeTab !== 'Map') {
+      setMapDiscoveryEvents([]);
+      setMapDiscoveryEventsLoading(false);
+      return;
+    }
+    if (mapCoords == null) {
+      return;
+    }
+    if (!ARISTA_COMMUNITY_EVENTS_URL.trim()) {
+      setMapDiscoveryEvents([]);
+      return;
+    }
+    let cancelled = false;
+    setMapDiscoveryEventsLoading(true);
+    void (async () => {
+      const fetched = await fetchAristaCommunityEvents({
+        lat: mapCoords.lat,
+        lon: mapCoords.lon,
+        communityId: 'lahacks2026',
+        tab: 'Upcoming',
+      });
+      if (cancelled) {
+        return;
+      }
+      setMapDiscoveryEvents(Array.isArray(fetched) ? fetched : []);
+      setMapDiscoveryEventsLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, mapCoords]);
 
   const initHealthKitAsync = async () => {
     if (healthKitLoading) {
@@ -1267,6 +2371,13 @@ export default function App() {
       } catch {
         // Ignore startup permission failures; user can retry in feature flows.
       }
+      if (Notifications?.requestPermissionsAsync) {
+        try {
+          await Notifications.requestPermissionsAsync();
+        } catch {
+          // Ignore startup permission failures; user can retry in feature flows.
+        }
+      }
       if (!cancelled) {
         void initHealthKitAsync();
       }
@@ -1358,6 +2469,139 @@ export default function App() {
   }, [demoScoreDriftEnabled, demoFastDriftEnabled]);
 
   useEffect(() => {
+    const pulseLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(heartPulseAnim, {
+          toValue: 1,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+        Animated.timing(heartPulseAnim, {
+          toValue: 0,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    pulseLoop.start();
+    return () => pulseLoop.stop();
+  }, [heartPulseAnim]);
+
+  useEffect(() => {
+    if (alertCount <= 0) {
+      alertBadgeBounceAnim.setValue(0);
+      return;
+    }
+    const bounceLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(alertBadgeBounceAnim, {
+          toValue: 1,
+          duration: 220,
+          useNativeDriver: true,
+        }),
+        Animated.timing(alertBadgeBounceAnim, {
+          toValue: 0,
+          duration: 320,
+          useNativeDriver: true,
+        }),
+        Animated.delay(560),
+      ]),
+    );
+    bounceLoop.start();
+    return () => bounceLoop.stop();
+  }, [alertCount, alertBadgeBounceAnim]);
+
+  useEffect(() => {
+    const anyDashboardDriftEnabled = Object.values(demoDashboardValueDrift).some(Boolean);
+    if (!anyDashboardDriftEnabled) {
+      return;
+    }
+    const intervalMs = demoFastDriftEnabled ? 380 : 760;
+    const interval = setInterval(() => {
+      const jitter = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
+      if (demoDashboardValueDrift.glucose) {
+        setGlucoseValue((prev) => Math.max(70, Math.min(240, prev + jitter(-5, 6))));
+      }
+      if (demoDashboardValueDrift.stress) {
+        setStressValue((prev) => Math.max(0, Math.min(100, prev + jitter(-4, 5))));
+      }
+      if (demoDashboardValueDrift.heartRateCard) {
+        setHeartRateCardValue((prev) => Math.max(45, Math.min(130, prev + jitter(-3, 4))));
+      }
+      if (demoDashboardValueDrift.steps) {
+        setActivitySteps((prev) => Math.max(0, Math.min(25000, prev + jitter(40, 280))));
+      }
+      if (demoDashboardValueDrift.sleep) {
+        setActivitySleepMinutes((prev) => Math.max(180, Math.min(9 * 60 + 59, prev + jitter(-12, 14))));
+      }
+      if (demoDashboardValueDrift.meds) {
+        setActivityMedsTaken((prev) => {
+          const next = prev + jitter(-1, 1);
+          return Math.max(0, Math.min(2, next));
+        });
+      }
+      if (demoDashboardValueDrift.water) {
+        setActivityWaterGlasses((prev) => Math.max(0, Math.min(12, prev + jitter(-1, 1))));
+      }
+    }, intervalMs);
+    return () => clearInterval(interval);
+  }, [demoDashboardValueDrift, demoFastDriftEnabled]);
+
+  useEffect(() => {
+    const wasEnabled = previousAlertDemoEnabledRef.current;
+    previousAlertDemoEnabledRef.current = demoAlertEnabled;
+    if (!demoAlertEnabled || wasEnabled) {
+      return;
+    }
+    async function sendAlertDemoNotifications() {
+      if (
+        !Notifications?.getPermissionsAsync ||
+        !Notifications?.requestPermissionsAsync ||
+        !Notifications?.scheduleNotificationAsync ||
+        !Notifications?.SchedulableTriggerInputTypes
+      ) {
+        return;
+      }
+      try {
+        const permission = await Notifications.getPermissionsAsync();
+        if (!permission.granted) {
+          const asked = await Notifications.requestPermissionsAsync();
+          if (!asked.granted) {
+            return;
+          }
+        }
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'Abnormal Glucose',
+            body: 'Glucose at 192 mg/dL.',
+            sound: 'default',
+          },
+          trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 1, repeats: false },
+        });
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'Elevated Stress',
+            body: 'Stress index reached 84/100.',
+            sound: 'default',
+          },
+          trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 2, repeats: false },
+        });
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'Abnormal Heart Rate',
+            body: 'Resting heart rate at 104 bpm.',
+            sound: 'default',
+          },
+          trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 3, repeats: false },
+        });
+      } catch {
+        // Ignore notification failures in demo mode.
+      }
+    }
+    void sendAlertDemoNotifications();
+  }, [demoAlertEnabled]);
+
+  useEffect(() => {
     if (activeTab !== 'Map') {
       return;
     }
@@ -1424,6 +2668,50 @@ export default function App() {
     }
   }, [selectedJoinedCommunityName]);
 
+  useEffect(() => {
+    suppressStarredGalleryLayoutScrollRef.current = false;
+    if (dashboardQuickMetrics.length === 0) {
+      setStarredGalleryIndex(0);
+      return;
+    }
+    setStarredGalleryIndex((i) => Math.min(i, dashboardQuickMetrics.length - 1));
+  }, [dashboardQuickMetrics]);
+
+  useLayoutEffect(() => {
+    if (dashboardQuickMetrics.length === 0 || starredGalleryPageWidth <= 0) {
+      return;
+    }
+    if (suppressStarredGalleryLayoutScrollRef.current) {
+      return;
+    }
+    const n = dashboardQuickMetrics.length;
+    const w = starredGalleryPageWidth;
+    const loop = n > 1;
+    const x = loop ? (starredGalleryIndex + 1) * w : starredGalleryIndex * w;
+    const animated = starredGalleryNextScrollAnimatedRef.current;
+    starredGalleryNextScrollAnimatedRef.current = false;
+    starredGalleryScrollRef.current?.scrollTo({ x, animated });
+  }, [dashboardQuickMetrics, starredGalleryIndex, starredGalleryPageWidth]);
+
+  useEffect(() => {
+    if (activeTab !== 'Insights' || activeInsightTab !== null) {
+      return;
+    }
+    if (dashboardQuickMetrics.length <= 1) {
+      return;
+    }
+    const intervalMs = 9000;
+    const id = setInterval(() => {
+      if (Date.now() < starredGallerySuppressAutoUntilRef.current) {
+        return;
+      }
+      starredGalleryNextScrollAnimatedRef.current = true;
+      suppressStarredGalleryLayoutScrollRef.current = false;
+      setStarredGalleryIndex((i) => (i + 1) % dashboardQuickMetrics.length);
+    }, intervalMs);
+    return () => clearInterval(id);
+  }, [activeTab, activeInsightTab, dashboardQuickMetrics]);
+
   return (
     <View style={styles.container}>
       <View style={styles.gridOverlay} />
@@ -1436,7 +2724,7 @@ export default function App() {
             {MAP_LAYERS.map((layer) => (
               <TouchableOpacity
                 key={layer}
-                onPress={() => setActiveMapLayer(layer)}
+                onPress={() => setActiveMapLayer((prev) => (prev === layer ? null : layer))}
                 style={[styles.mapLayerChip, activeMapLayer === layer && styles.mapLayerChipActive]}
               >
                 <Text style={[styles.mapLayerChipText, activeMapLayer === layer && styles.mapLayerChipTextActive]}>{layer}</Text>
@@ -1450,9 +2738,13 @@ export default function App() {
                 ? 'Location permission denied. Enable it to view your map.'
                 : 'Requesting location...'}
           </Text>
+          {mapCoords && mapDiscoveryEventsLoading ? (
+            <Text style={styles.mapSubtitle}>Loading Ticketmaster & Eventbrite listings…</Text>
+          ) : null}
           {mapCoords ? (
             <View style={styles.mapContainer}>
               <MapView
+                ref={mapViewRef}
                 region={{
                   latitude: mapCoords.lat,
                   longitude: mapCoords.lon,
@@ -1467,12 +2759,20 @@ export default function App() {
                   <Marker
                     key={item.id}
                     coordinate={{ latitude: item.latitude, longitude: item.longitude }}
-                    pinColor="#22c55e"
+                    pinColor={item.pinColor ?? '#22c55e'}
                     title={item.title}
                     description={item.subtitle}
+                    onPress={() => {
+                      if (item.linkedEvent) {
+                        openEventLinkPrompt(item.linkedEvent);
+                      }
+                    }}
                   />
                 ))}
               </MapView>
+              <TouchableOpacity onPress={() => void recenterMapToCurrentLocation()} style={styles.mapRecenterBtn}>
+                <Text style={styles.mapRecenterBtnText}>Locate Me</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.mapFallbackCard}>
@@ -1489,19 +2789,29 @@ export default function App() {
           {activeInsightTab == null ? (
             <>
               <Text style={styles.insightsTitle}>Insights</Text>
-              <Text style={styles.insightsStatusText}>
-                {Platform.OS !== 'ios'
-                  ? 'Apple Health is available on iOS only.'
-                  : healthKitLoading
-                    ? 'Connecting to Apple Health...'
-                  : healthKitStatus === 'ready'
-                    ? 'Connected to Apple Health.'
-                    : healthKitStatus === 'denied'
-                      ? 'Apple Health permission denied.'
-                      : healthKitStatus === 'unsupported'
-                        ? 'Apple Health unavailable in this build.'
-                        : 'Requesting Apple Health access...'}
-              </Text>
+              <View style={styles.insightsStatusRow}>
+                {Platform.OS === 'ios' && healthKitLoading ? (
+                  <ActivityIndicator accessibilityLabel="Connecting to Apple Health" color="#93c5fd" size="small" />
+                ) : null}
+                <Text
+                  style={[
+                    styles.insightsHealthTagline,
+                    healthKitStatus === 'ready' && Platform.OS === 'ios' && styles.insightsHealthTaglineConnected,
+                  ]}
+                >
+                  {Platform.OS !== 'ios'
+                    ? 'Apple Health is available on iOS only.'
+                    : healthKitLoading
+                      ? 'Connecting to Apple Health...'
+                      : healthKitStatus === 'ready'
+                        ? 'Connected to Apple Health.'
+                        : healthKitStatus === 'denied'
+                          ? 'Apple Health permission denied.'
+                          : healthKitStatus === 'unsupported'
+                            ? 'Apple Health unavailable in this build.'
+                            : 'Requesting Apple Health access...'}
+                </Text>
+              </View>
               {Platform.OS === 'ios' && healthKitStatus !== 'ready' ? (
                 <TouchableOpacity
                   disabled={healthKitLoading}
@@ -1515,29 +2825,104 @@ export default function App() {
                 </TouchableOpacity>
               ) : null}
               {healthKitLastError ? <Text style={styles.healthErrorText}>{healthKitLastError}</Text> : null}
-              <TextInput
-                onChangeText={setQuickMetricSearchQuery}
-                placeholder="Search and star metrics for Dashboard quick actions"
-                placeholderTextColor="#64748b"
-                style={styles.quickMetricSearchInput}
-                value={quickMetricSearchQuery}
-              />
-              <View style={styles.quickMetricSearchResults}>
-                {filteredQuickMetricOptions.slice(0, 6).map((metric) => {
-                  const isSelected = dashboardQuickMetrics.includes(metric);
-                  return (
-                    <TouchableOpacity
-                      key={`search-${metric}`}
-                      onPress={() => toggleDashboardQuickMetric(metric)}
-                      style={[styles.quickMetricOptionChip, isSelected && styles.quickMetricOptionChipActive]}
+              <View style={styles.insightsStarredGalleryWrap}>
+                {dashboardQuickMetrics.length === 0 ? (
+                  <Text style={styles.insightsStarredGalleryEmptyText}>
+                    Star metrics with ☆ below — your favorites appear here as swipeable charts.
+                  </Text>
+                ) : (
+                  <>
+                    <ScrollView
+                      ref={starredGalleryScrollRef}
+                      decelerationRate="fast"
+                      horizontal
+                      keyboardShouldPersistTaps="handled"
+                      onMomentumScrollEnd={onInsightsGalleryMomentumEnd}
+                      onScroll={onInsightsGalleryScroll}
+                      onScrollBeginDrag={() => {
+                        suppressStarredGalleryLayoutScrollRef.current = true;
+                        starredGallerySuppressAutoUntilRef.current = Date.now() + 12000;
+                      }}
+                      pagingEnabled
+                      scrollEventThrottle={16}
+                      showsHorizontalScrollIndicator={false}
                     >
-                      <Text style={[styles.quickMetricOptionText, isSelected && styles.quickMetricOptionTextActive]}>
-                        {isSelected ? '★' : '☆'} {metric}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+                      {insightsGalleryScrollPages.map(({ metric, pageKey }) => {
+                        const content = insightContentByTab[metric];
+                        const w = starredGalleryPageWidth;
+                        if (!content || w <= 0) {
+                          return <View key={pageKey} style={{ width: w }} />;
+                        }
+                        return (
+                          <View key={pageKey} style={{ width: w }}>
+                            <InsightsFavoriteSparkPage
+                              content={content}
+                              iconGlyph={QUICK_ACTION_ICON_BY_TAB[metric]}
+                              metric={metric}
+                              pageWidth={w}
+                              theme={QUICK_ACTION_THEME_COLOR_BY_TAB[metric]}
+                            />
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                    <View style={styles.insightsStarredGalleryDots}>
+                      {dashboardQuickMetrics.map((m, idx) => (
+                        <TouchableOpacity
+                          key={`starred-gallery-dot-${m}-${idx}`}
+                          accessibilityLabel={`Show ${m}`}
+                          hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                          onPress={() => {
+                            starredGallerySuppressAutoUntilRef.current = Date.now() + 12000;
+                            suppressStarredGalleryLayoutScrollRef.current = false;
+                            setStarredGalleryIndex(idx);
+                          }}
+                          style={[
+                            styles.insightsStarredGalleryDot,
+                            idx === starredGalleryIndex && styles.insightsStarredGalleryDotActive,
+                            { backgroundColor: idx === starredGalleryIndex ? QUICK_ACTION_THEME_COLOR_BY_TAB[m] : 'rgba(148,163,184,0.35)' },
+                          ]}
+                        />
+                      ))}
+                    </View>
+                  </>
+                )}
               </View>
+              <Text style={styles.insightsSectionLabel}>Dashboard quick actions</Text>
+              <View style={styles.insightsSearchPanel}>
+                <TextInput
+                  onChangeText={setQuickMetricSearchQuery}
+                  placeholder="Search metrics to star…"
+                  placeholderTextColor="#64748b"
+                  style={styles.quickMetricSearchInput}
+                  value={quickMetricSearchQuery}
+                />
+                <View style={styles.quickMetricSearchResults}>
+                  {filteredQuickMetricOptions.slice(0, 6).map((metric, chipIndex) => {
+                    const isSelected = dashboardQuickMetrics.includes(metric);
+                    return (
+                      <TouchableOpacity
+                        key={`search-${metric}`}
+                        onPress={() => toggleDashboardQuickMetric(metric)}
+                        style={[
+                          styles.quickMetricOptionChip,
+                          chipIndex > 0 && styles.quickMetricOptionChipSpacing,
+                          isSelected && styles.quickMetricOptionChipActive,
+                        ]}
+                      >
+                        <Text
+                          ellipsizeMode="tail"
+                          numberOfLines={1}
+                          style={[styles.quickMetricOptionText, isSelected && styles.quickMetricOptionTextActive]}
+                        >
+                          {isSelected ? '★' : '☆'} {metric}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+              <View style={styles.insightsQuickToThemesDivider} />
               <ScrollView
                 bounces={false}
                 overScrollMode="never"
@@ -1546,7 +2931,7 @@ export default function App() {
               >
                 <View style={styles.insightsTabStack}>
                   {INSIGHT_GROUPS.map((group) => {
-                    const isExpanded = expandedInsightGroups[group.id] ?? true;
+                    const isExpanded = expandedInsightGroups[group.id] ?? false;
                     return (
                       <View key={group.id} style={styles.insightsGroupCard}>
                         <View style={[styles.insightsGroupBand, { backgroundColor: group.color }]} />
@@ -1599,19 +2984,28 @@ export default function App() {
                 </TouchableOpacity>
                 <View style={styles.insightsDetailHeaderText}>
                   <Text style={styles.insightsTitle}>{activeInsightTab}</Text>
-                  <Text style={styles.insightsDetailSubtitle}>Dedicated insight screen</Text>
+                  <Text style={styles.insightsDetailSubtitle}>Dedicated insight view</Text>
                 </View>
               </View>
               {selectedInsightContent ? (
-                <>
+                <ScrollView
+                  bounces={false}
+                  contentContainerStyle={styles.insightsDetailScrollContent}
+                  overScrollMode="never"
+                  showsVerticalScrollIndicator={false}
+                  style={styles.insightsDetailScroll}
+                >
                   <View style={styles.insightsCard}>
+                    <Text style={styles.insightsCardEyebrow}>Overview</Text>
                     <Text style={styles.insightsCardTitle}>{selectedInsightContent.title}</Text>
                     <Text style={styles.insightsCardSummary}>{selectedInsightContent.summary}</Text>
-                    <Text style={styles.insightsCardTrend}>{selectedInsightContent.trend}</Text>
+                    <View style={styles.insightsTrendPill}>
+                      <Text style={styles.insightsCardTrend}>{selectedInsightContent.trend}</Text>
+                    </View>
                   </View>
                   <View style={styles.insightsCard}>
                     <View style={styles.insightsChartHeader}>
-                      <Text style={styles.insightsCardSection}>7-Day Trend</Text>
+                      <Text style={styles.insightsCardSection}>7-day trend</Text>
                       <Text style={styles.insightsChartUnit}>Unit: {selectedInsightContent.trendUnit}</Text>
                     </View>
                     <View style={styles.insightsLineChartWrap}>
@@ -1632,12 +3026,14 @@ export default function App() {
                           return { x, y, value };
                         });
                         const pathD = coords.map((pt, idx) => `${idx === 0 ? 'M' : 'L'} ${pt.x} ${pt.y}`).join(' ');
+                        const midY = graphPaddingY + usableHeight / 2;
 
                         return (
                           <>
                             <Svg height={chartHeight} viewBox={`0 0 ${chartWidth} ${chartHeight}`} width="100%">
-                              <Path d={`M ${graphPaddingX} ${chartHeight - graphPaddingY} L ${chartWidth - graphPaddingX} ${chartHeight - graphPaddingY}`} stroke="rgba(148,163,184,0.25)" strokeWidth={1.2} />
-                              <Path d={pathD} fill="none" stroke="#38bdf8" strokeWidth={2.6} />
+                              <Path d={`M ${graphPaddingX} ${chartHeight - graphPaddingY} L ${chartWidth - graphPaddingX} ${chartHeight - graphPaddingY}`} stroke="rgba(148,163,184,0.22)" strokeWidth={1} />
+                              <Path d={`M ${graphPaddingX} ${midY} L ${chartWidth - graphPaddingX} ${midY}`} stroke="rgba(148,163,184,0.12)" strokeDasharray="4 6" strokeWidth={1} />
+                              <Path d={pathD} fill="none" stroke="#38bdf8" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.6} />
                               {coords.map((pt, idx) => (
                                 <Circle
                                   key={`${selectedInsightContent.title}-dot-${idx}`}
@@ -1664,10 +3060,10 @@ export default function App() {
                     </View>
                   </View>
                   <View style={styles.insightsCard}>
-                    <Text style={styles.insightsCardSection}>Recommendation</Text>
+                    <Text style={styles.insightsCardEyebrow}>Next steps</Text>
                     <Text style={styles.insightsCardSummary}>{selectedInsightContent.recommendation}</Text>
                   </View>
-                </>
+                </ScrollView>
               ) : null}
             </View>
           )}
@@ -1697,6 +3093,12 @@ export default function App() {
               {selectedJoinedCommunity ? (
                 <View>
                   <View style={styles.communityHero}>
+                    {COMMUNITY_SPOTLIGHT_IMAGE_URL ? (
+                      <>
+                        <Image source={{ uri: COMMUNITY_SPOTLIGHT_IMAGE_URL }} style={styles.communityHeroImage} resizeMode="cover" />
+                        <View style={styles.communityHeroScrim} />
+                      </>
+                    ) : null}
                     <View style={styles.communityHeroActions}>
                       <TouchableOpacity onPress={() => setSelectedJoinedCommunityName(null)} style={styles.communityHeroIconBtn}>
                         <Text style={styles.communityHeroIconText}>{'<'}</Text>
@@ -1826,44 +3228,76 @@ export default function App() {
                         onTouchStart={() => setIsInteractingWithEventsList(true)}
                         style={styles.eventsListContainer}
                       >
-                        <ScrollView bounces={false} nestedScrollEnabled overScrollMode="never" showsVerticalScrollIndicator={false}>
-                          {(eventsTab === 'Upcoming' ? COMMUNITY_UPCOMING_EVENTS : COMMUNITY_PAST_EVENTS).map((event, index, arr) => (
-                            <View key={`${selectedJoinedCommunity.name}-${event.id}`}>
-                              <View style={styles.eventRow}>
-                                <View style={styles.eventDateCol}>
-                                  <Text style={styles.eventDateMonth}>{event.month}</Text>
-                                  <Text style={styles.eventDateDay}>{event.day}</Text>
-                                  <Text style={styles.eventDateDow}>{event.dow}</Text>
-                                </View>
-                                <View style={styles.eventInfoCol}>
-                                  <Text style={styles.eventTitle}>{event.title}</Text>
-                                  <Text style={styles.eventMeta}>{event.meta}</Text>
-                                  <Text style={styles.eventRsvp}>{event.rsvp}</Text>
-                                </View>
+                        {loadingCommunityEvents ? (
+                          <Text style={styles.eventsLoadingText}>Loading live events...</Text>
+                        ) : null}
+                        {displayedEvents.length === 0 && !loadingCommunityEvents ? (
+                          <Text style={styles.eventsEmptyText}>No live events found for this tab yet.</Text>
+                        ) : (
+                          <ScrollView bounces={false} nestedScrollEnabled overScrollMode="never" showsVerticalScrollIndicator={false}>
+                            {displayedEvents.map((event, index, arr) => (
+                              <View key={`${selectedJoinedCommunity.name}-${event.id}`}>
+                                <TouchableOpacity activeOpacity={0.85} onPress={() => openEventLinkPrompt(event)} style={styles.eventRow}>
+                                  <View style={styles.eventDateCol}>
+                                    <Text style={styles.eventDateMonth}>{event.month}</Text>
+                                    <Text style={styles.eventDateDay}>{event.day}</Text>
+                                    <Text style={styles.eventDateDow}>{event.dow}</Text>
+                                  </View>
+                                  <View style={styles.eventInfoCol}>
+                                    <Text style={styles.eventTitle}>{event.title}</Text>
+                                    <Text style={styles.eventMeta}>{event.meta}</Text>
+                                    <Text
+                                      style={[
+                                        styles.eventRsvp,
+                                        (event.source ?? 'ticketmaster').toLowerCase() === 'eventbrite'
+                                          ? styles.eventSourceEventbrite
+                                          : styles.eventSourceTicketmaster,
+                                      ]}
+                                    >
+                                      {`${formatEventSourceName(event.source)}: `}
+                                      <Text style={eventsTab === 'Upcoming' ? styles.eventStatusLive : styles.eventStatusPassed}>
+                                        {eventsTab === 'Upcoming' ? 'Live' : 'Passed'}
+                                      </Text>
+                                    </Text>
+                                  </View>
+                                </TouchableOpacity>
+                                {index < arr.length - 1 ? <View style={styles.eventDivider} /> : null}
                               </View>
-                              {index < arr.length - 1 ? <View style={styles.eventDivider} /> : null}
-                            </View>
-                          ))}
-                        </ScrollView>
+                            ))}
+                          </ScrollView>
+                        )}
                       </View>
                     </View>
                   ) : (
                     <View>
                       <View style={styles.progressBoardHeader}>
                         <Text style={styles.progressBoardTitle}>Progress Board</Text>
-                        <TouchableOpacity style={styles.createPostBtn}>
+                        <TouchableOpacity onPress={openCreateProgressPostModal} style={styles.createPostBtn}>
                           <Text style={styles.createPostBtnText}>+ Create Post</Text>
                         </TouchableOpacity>
                       </View>
-                      {COMMUNITY_PROGRESS_POSTS.map((post) => (
+                      {progressPostsForSelectedCommunity.map((post) => (
                         <View key={`${selectedJoinedCommunity.name}-${post.id}`} style={styles.progressPostCard}>
                           <View style={styles.progressPostHeader}>
                             <Text style={styles.progressPostAuthor}>{post.author}</Text>
                             <Text style={styles.progressPostTime}>{post.time}</Text>
                           </View>
                           <Text style={styles.progressPostCaption}>{post.caption}</Text>
+                          {post.status !== 'ready' ? (
+                            <Text style={styles.progressPostStatus}>
+                              {post.status === 'processing' ? 'Analyzing image...' : 'Upload failed. Tap Create Post to retry.'}
+                            </Text>
+                          ) : null}
                           <View style={styles.progressPostImage}>
-                            <Text style={styles.progressPostImageText}>{post.imageLabel}</Text>
+                            {post.imageUrl ? (
+                              <Image
+                                resizeMode="cover"
+                                source={{ uri: post.mediaVariants?.feedUrl ?? post.imageUrl }}
+                                style={styles.progressPostImageActual}
+                              />
+                            ) : (
+                              <Text style={styles.progressPostImageText}>{post.imageLabel}</Text>
+                            )}
                           </View>
                         </View>
                       ))}
@@ -1968,9 +3402,13 @@ export default function App() {
         <>
         <ScrollView bounces={false} contentContainerStyle={styles.content} overScrollMode="never" showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <View style={styles.alertBlock}>
+          <TouchableOpacity
+            hitSlop={{ top: 14, right: 14, left: 14, bottom: 6 }}
+            onPress={() => setShowAlertsScreen(true)}
+            style={styles.alertBlock}
+          >
             <View style={styles.alertIconWrap}>
-              <Svg height={28} viewBox="0 0 48 32" width={40}>
+              <Svg height={28} pointerEvents="none" viewBox="0 0 48 32" width={40}>
                 <Path
                   d="M9 8h4l3-3h16l3 3h4l3 4v11l-3 3h-4l-2 2H15l-2-2H9l-3-3V12l3-4zm7 4c-4 0-7 3-7 7s3 7 7 7h16c4 0 7-3 7-7s-3-7-7-7H16zm7 2h6v3h-6v-3z"
                   fill="none"
@@ -1978,12 +3416,34 @@ export default function App() {
                   strokeWidth={2.2}
                 />
               </Svg>
-              <View style={styles.alertBadge}>
-                <Text style={styles.alertBadgeText}>2</Text>
-              </View>
+              {alertCount > 0 ? (
+                <Animated.View
+                  style={[
+                    styles.alertBadge,
+                    {
+                      transform: [
+                        {
+                          translateY: alertBadgeBounceAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, -10],
+                          }),
+                        },
+                        {
+                          scale: alertBadgeBounceAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [1, 1.22],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                >
+                  <Text style={styles.alertBadgeText}>{alertCount}</Text>
+                </Animated.View>
+              ) : null}
             </View>
-            <Text style={styles.alertText}>2 Alerts {'>'}</Text>
-          </View>
+            <Text style={styles.alertText}>{alertCount > 0 ? `${alertCount} Alerts` : 'No alerts'}</Text>
+          </TouchableOpacity>
           <View style={styles.headerLeft}>
             <TouchableOpacity onPress={() => setSidebarOpen(true)} style={styles.menuBtn}>
               <View style={styles.menuLine} />
@@ -2132,7 +3592,27 @@ export default function App() {
               </SvgText>
             </Svg>
           </View>
-          <Text style={styles.scoreHeart}>♥</Text>
+          <Animated.Text
+            style={[
+              styles.scoreHeart,
+              {
+                opacity: heartPulseAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.75, 1],
+                }),
+                transform: [
+                  {
+                    scale: heartPulseAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.96, 1.08],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            ♥
+          </Animated.Text>
           <Text style={styles.scoreLabel}>HEALTH SCORE</Text>
           <View style={styles.scoreRow}>
             <Text style={styles.score}>{displayScore}</Text>
@@ -2150,7 +3630,7 @@ export default function App() {
         </View>
 
         <View style={styles.grid}>
-          {METRICS.map((item) => (
+          {dashboardMetrics.map((item) => (
             <View key={item.label} style={styles.glassCard}>
               <Text style={styles.metricLabel}>{item.label}</Text>
               <View style={styles.metricValueRow}>
@@ -2194,21 +3674,17 @@ export default function App() {
         </View>
 
         <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
-        <View style={styles.quickRow}>
-          {dashboardQuickMetrics.map((metric) => (
-            <View key={metric} style={styles.quickItem}>
-              <View style={styles.quickIcon}>
-                <Text style={styles.quickIconGlyph}>{QUICK_ACTION_ICON_BY_TAB[metric]}</Text>
-              </View>
-              <Text numberOfLines={1} style={styles.quickText}>
-                {metric}
-              </Text>
-            </View>
-          ))}
-        </View>
+        <DashboardQuickActionMetricsRow
+          metrics={dashboardQuickMetrics}
+          onMetricPress={(metric) => {
+            setActiveTab('Insights');
+            setActiveInsightTab(metric);
+          }}
+          onReorder={setDashboardQuickMetrics}
+        />
 
         <View style={styles.activityContainer}>
-          {ACTIVITY.map((item, index) => (
+          {dashboardActivity.map((item, index) => (
             <View key={item.label} style={styles.activityItem}>
               <View style={styles.activityTopRow}>
                 <ActivityMiniIcon label={item.label} />
@@ -2221,7 +3697,7 @@ export default function App() {
                 <View style={[styles.activityFill, { flex: item.fill, backgroundColor: item.color }]} />
                 <View style={[styles.activityTrackRemainder, { flex: 100 - item.fill }]} />
               </View>
-              {index < ACTIVITY.length - 1 ? <View style={styles.activityDivider} /> : null}
+              {index < dashboardActivity.length - 1 ? <View style={styles.activityDivider} /> : null}
             </View>
           ))}
         </View>
@@ -2241,7 +3717,36 @@ export default function App() {
         </Svg>
         {NAV_ITEMS.map((item: { label: string; icon: string }) => (
           <TouchableOpacity key={item.label} onPress={() => setActiveTab(item.label)} style={styles.navItem}>
-            <Text style={[styles.navIcon, activeTab === item.label && styles.navActive]}>{item.icon}</Text>
+            {item.label === 'Dashboard' && alertCount > 0 ? (
+              <Animated.View
+                style={[
+                  styles.navAlertBadge,
+                  {
+                    transform: [
+                      {
+                        translateY: alertBadgeBounceAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0, -6],
+                        }),
+                      },
+                      {
+                        scale: alertBadgeBounceAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [1, 1.16],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <Text style={styles.navAlertBadgeText}>{alertCount}</Text>
+              </Animated.View>
+            ) : null}
+            {item.label === 'Insights' ? (
+              <InsightsBulbIcon active={activeTab === item.label} />
+            ) : (
+              <Text style={[styles.navIcon, activeTab === item.label && styles.navActive]}>{item.icon}</Text>
+            )}
             <Text style={[styles.navText, activeTab === item.label && styles.navActive]}>{item.label}</Text>
           </TouchableOpacity>
         ))}
@@ -2284,6 +3789,91 @@ export default function App() {
         </Pressable>
       </Modal>
 
+      <Modal
+        animationType="fade"
+        transparent
+        visible={showCreateProgressPostModal}
+        onRequestClose={() => setShowCreateProgressPostModal(false)}
+      >
+        <Pressable onPress={() => setShowCreateProgressPostModal(false)} style={styles.challengeModalBackdrop}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
+            style={styles.createPostKeyboardAvoiding}
+          >
+            <Pressable onPress={Keyboard.dismiss} style={styles.challengeModalCard}>
+              <Text style={styles.challengeModalTitle}>Create Progress Post</Text>
+              <Text style={styles.challengeModalHint}>Upload a photo and caption your update.</Text>
+              {createPostImageUri ? (
+                <Image resizeMode="cover" source={{ uri: createPostImageUri }} style={styles.createPostPreviewImage} />
+              ) : null}
+              <TextInput
+                multiline
+                onChangeText={setCreatePostCaption}
+                placeholder="What progress did you make today?"
+                placeholderTextColor="#64748b"
+                style={[styles.challengeInput, styles.challengeInputMultiline]}
+                value={createPostCaption}
+              />
+              <View style={styles.challengeModalActions}>
+                <TouchableOpacity
+                  disabled={isPublishingProgressPost}
+                  onPress={() => setShowCreateProgressPostModal(false)}
+                  style={styles.challengeModalCancelBtn}
+                >
+                  <Text style={styles.challengeModalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  disabled={isPublishingProgressPost}
+                  onPress={createProgressPost}
+                  style={styles.challengeModalCreateBtn}
+                >
+                  <Text style={styles.challengeModalCreateText}>
+                    {isPublishingProgressPost ? 'Publishing...' : 'Publish'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        animationType="slide"
+        transparent
+        visible={showAlertsScreen}
+        onRequestClose={() => setShowAlertsScreen(false)}
+      >
+        <View style={styles.alertsModalBackdrop}>
+          <View style={styles.alertsModalCard}>
+            <View style={styles.alertsModalHeader}>
+              <TouchableOpacity onPress={() => setShowAlertsScreen(false)} style={styles.alertsBackBtn}>
+                <Text style={styles.alertsBackText}>{'<'}</Text>
+              </TouchableOpacity>
+              <View style={styles.alertsHeaderTextWrap}>
+                <Text style={styles.alertsTitle}>Alerts</Text>
+                <Text style={styles.alertsSubtitle}>Health notifications</Text>
+              </View>
+            </View>
+            {alertItems.length === 0 ? (
+              <View style={styles.alertsEmptyCard}>
+                <Text style={styles.alertsEmptyText}>No new alerts</Text>
+              </View>
+            ) : (
+              <ScrollView bounces={false} overScrollMode="never" showsVerticalScrollIndicator={false}>
+                {alertItems.map((alert) => (
+                  <View key={alert.id} style={styles.alertsCard}>
+                    <Text style={styles.alertsCardTitle}>{alert.title}</Text>
+                    <Text style={styles.alertsCardDetail}>{alert.detail}</Text>
+                    <Text style={styles.alertsCardSeverity}>{alert.severity}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
       {sidebarOpen ? (
         <View style={styles.sidebarOverlay}>
           <View style={styles.sidebarPanel}>
@@ -2296,40 +3886,111 @@ export default function App() {
             <TouchableOpacity style={styles.sidebarItem}>
               <Text style={styles.sidebarItemText}>Profile</Text>
             </TouchableOpacity>
-            <View style={styles.sidebarSection}>
-              <Text style={styles.sidebarSectionTitle}>Demo Tools</Text>
-              <TouchableOpacity onPress={() => setDemoScoreDriftEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
-                <Text style={styles.demoToggleLabel}>Live Health Score Drift</Text>
-                <View style={[styles.demoTogglePill, demoScoreDriftEnabled && styles.demoTogglePillActive]}>
-                  <Text style={[styles.demoTogglePillText, demoScoreDriftEnabled && styles.demoTogglePillTextActive]}>
-                    {demoScoreDriftEnabled ? 'ON' : 'OFF'}
+            <View style={styles.sidebarDivider} />
+            <Text style={styles.sidebarSectionTitle}>Demo Tools</Text>
+            <TouchableOpacity onPress={toggleAllDemoTools} style={styles.demoToggleRow}>
+              <Text style={styles.demoToggleLabel}>All Demo Tools</Text>
+              <View style={styles.demoToggleRowRight}>
+                <View style={[styles.demoTogglePill, allDemoToolsEnabled && styles.demoTogglePillActive]}>
+                  <Text style={[styles.demoTogglePillText, allDemoToolsEnabled && styles.demoTogglePillTextActive]}>
+                    {allDemoToolsEnabled ? 'ON' : 'OFF'}
                   </Text>
                 </View>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setDemoFastDriftEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
-                <Text style={styles.demoToggleLabel}>Fast Drift Mode</Text>
-                <View style={[styles.demoTogglePill, demoFastDriftEnabled && styles.demoTogglePillActive]}>
-                  <Text style={[styles.demoTogglePillText, demoFastDriftEnabled && styles.demoTogglePillTextActive]}>
-                    {demoFastDriftEnabled ? 'ON' : 'OFF'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setUseDeviceLocation((v: boolean) => !v)} style={styles.demoToggleRow}>
-                <Text style={styles.demoToggleLabel}>Use Device Location</Text>
-                <View style={[styles.demoTogglePill, useDeviceLocation && styles.demoTogglePillActive]}>
-                  <Text style={[styles.demoTogglePillText, useDeviceLocation && styles.demoTogglePillTextActive]}>
-                    {useDeviceLocation ? 'ON' : 'OFF'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-              <Text style={styles.demoHelperText}>
-                {locationStatus === 'granted'
-                  ? 'Location: granted'
-                  : locationStatus === 'denied'
-                    ? 'Location: denied (using fallback)'
-                    : ''}
-              </Text>
-            </View>
+                <TouchableOpacity
+                  onPress={(event) => {
+                    event.stopPropagation?.();
+                    setDemoToolsDropdownOpen((v) => !v);
+                  }}
+                  style={styles.demoDropdownBtn}
+                >
+                  <Text style={styles.demoDropdownText}>{demoToolsDropdownOpen ? '▾' : '▸'}</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setDemoFastDriftEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
+              <Text style={styles.demoToggleLabel}>Fast Drift Mode</Text>
+              <View style={[styles.demoTogglePill, demoFastDriftEnabled && styles.demoTogglePillActive]}>
+                <Text style={[styles.demoTogglePillText, demoFastDriftEnabled && styles.demoTogglePillTextActive]}>
+                  {demoFastDriftEnabled ? 'ON' : 'OFF'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setDemoAlertEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
+              <Text style={styles.demoToggleLabel}>Alert</Text>
+              <View style={[styles.demoTogglePill, demoAlertEnabled && styles.demoTogglePillActive]}>
+                <Text style={[styles.demoTogglePillText, demoAlertEnabled && styles.demoTogglePillTextActive]}>
+                  {demoAlertEnabled ? 'ON' : 'OFF'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+            {demoToolsDropdownOpen ? (
+              <View style={styles.demoDropdownList}>
+                <TouchableOpacity onPress={() => setDemoScoreDriftEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Live Health Score Drift</Text>
+                  <View style={[styles.demoTogglePill, demoScoreDriftEnabled && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoScoreDriftEnabled && styles.demoTogglePillTextActive]}>
+                      {demoScoreDriftEnabled ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('glucose')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Glucose Card Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.glucose && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.glucose && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.glucose ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('stress')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Stress Card Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.stress && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.stress && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.stress ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('heartRateCard')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Heart Rate Card Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.heartRateCard && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.heartRateCard && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.heartRateCard ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('steps')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Steps Activity Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.steps && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.steps && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.steps ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('sleep')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Sleep Activity Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.sleep && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.sleep && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.sleep ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('meds')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Meds Activity Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.meds && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.meds && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.meds ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => toggleDashboardValueDrift('water')} style={styles.demoToggleRow}>
+                  <Text style={styles.demoToggleLabel}>Water Activity Drift</Text>
+                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.water && styles.demoTogglePillActive]}>
+                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.water && styles.demoTogglePillTextActive]}>
+                      {demoDashboardValueDrift.water ? 'ON' : 'OFF'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            ) : null}
           </View>
           <TouchableOpacity onPress={() => setSidebarOpen(false)} style={styles.sidebarScrim} />
         </View>
@@ -2420,6 +4081,22 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
+  mapRecenterBtn: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(59,130,246,0.7)',
+    backgroundColor: 'rgba(15,23,42,0.86)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  mapRecenterBtnText: {
+    color: '#bfdbfe',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   mapFallbackCard: {
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.22)',
@@ -2435,21 +4112,81 @@ const styles = StyleSheet.create({
   insightsScreen: {
     flex: 1,
     paddingTop: 54,
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     paddingBottom: 78,
     backgroundColor: '#111827',
   },
   insightsTitle: {
     color: '#f8fafc',
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: -0.3,
   },
-  insightsStatusText: {
+  insightsStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 8,
+  },
+  insightsHealthTagline: {
+    flex: 1,
+    color: '#94a3b8',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  insightsHealthTaglineConnected: {
+    color: '#86efac',
+  },
+  insightsStarredGalleryWrap: {
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  insightsStarredGalleryEmptyText: {
     color: '#94a3b8',
     fontSize: 13,
-    marginTop: 4,
-    marginBottom: 4,
+    lineHeight: 19,
     fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  insightsStarredGalleryDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+  },
+  insightsStarredGalleryDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  insightsStarredGalleryDotActive: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  insightsSectionLabel: {
+    marginTop: 18,
+    marginBottom: 8,
+    color: '#e2e8f0',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+  },
+  insightsSearchPanel: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(2,6,23,0.45)',
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
+    overflow: 'hidden',
+    maxWidth: '100%',
   },
   healthConnectBtn: {
     alignSelf: 'flex-start',
@@ -2459,7 +4196,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 9,
-    marginBottom: 6,
+    marginTop: 10,
   },
   healthConnectBtnDisabled: {
     opacity: 0.55,
@@ -2473,44 +4210,65 @@ const styles = StyleSheet.create({
     color: '#fca5a5',
     fontSize: 12,
     lineHeight: 17,
-    marginBottom: 6,
+    marginTop: 8,
     fontWeight: '600',
   },
   quickMetricSearchInput: {
     borderWidth: 1,
-    borderColor: 'rgba(148,163,184,0.4)',
-    backgroundColor: 'rgba(2,6,23,0.55)',
-    borderRadius: 10,
+    borderColor: 'rgba(148,163,184,0.35)',
+    backgroundColor: 'rgba(15,23,42,0.55)',
+    borderRadius: 12,
     color: '#e2e8f0',
-    paddingHorizontal: 11,
-    paddingVertical: 9,
-    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     fontSize: 13,
     fontWeight: '600',
   },
   quickMetricSearchResults: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 6,
-    marginBottom: 6,
+    flexWrap: 'nowrap',
+    alignItems: 'stretch',
+    width: '100%',
+    maxWidth: '100%',
+    marginTop: 10,
+    overflow: 'hidden',
+  },
+  insightsQuickToThemesDivider: {
+    height: 1,
+    backgroundColor: 'rgba(148,163,184,0.22)',
+    width: '100%',
+    marginTop: 16,
+    marginBottom: 12,
   },
   quickMetricOptionChip: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+    minWidth: 0,
     borderWidth: 1,
     borderColor: 'rgba(148,163,184,0.45)',
     backgroundColor: 'rgba(15,23,42,0.35)',
     borderRadius: 999,
-    paddingHorizontal: 10,
+    paddingHorizontal: 6,
     paddingVertical: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  quickMetricOptionChipSpacing: {
+    marginLeft: 6,
   },
   quickMetricOptionChipActive: {
     borderColor: 'rgba(96,165,250,0.75)',
     backgroundColor: 'rgba(59,130,246,0.3)',
   },
   quickMetricOptionText: {
+    width: '100%',
     color: '#cbd5e1',
     fontSize: 11,
     fontWeight: '700',
+    textAlign: 'center',
+    minWidth: 0,
   },
   quickMetricOptionTextActive: {
     color: '#eff6ff',
@@ -2637,8 +4395,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(59,130,246,0.2)',
   },
   insightsTabText: {
-    color: '#9ca3af',
-    fontSize: 18,
+    color: '#cbd5e1',
+    fontSize: 17,
     fontWeight: '700',
   },
   insightsTabTextActive: {
@@ -2646,16 +4404,25 @@ const styles = StyleSheet.create({
   },
   insightsCard: {
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    borderRadius: 14,
-    padding: 14,
-    backgroundColor: 'rgba(15,23,42,0.4)',
-    marginBottom: 10,
+    borderColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 16,
+    padding: 16,
+    backgroundColor: 'rgba(15,23,42,0.52)',
+    marginBottom: 12,
+  },
+  insightsCardEyebrow: {
+    color: '#93c5fd',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginBottom: 6,
   },
   insightsCardTitle: {
     color: '#f8fafc',
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: -0.2,
   },
   insightsCardSection: {
     color: '#93c5fd',
@@ -2665,15 +4432,24 @@ const styles = StyleSheet.create({
   },
   insightsCardSummary: {
     color: '#cbd5e1',
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 4,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 8,
+  },
+  insightsTrendPill: {
+    alignSelf: 'flex-start',
+    marginTop: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.35)',
+    backgroundColor: 'rgba(34,197,94,0.12)',
   },
   insightsCardTrend: {
-    color: '#86efac',
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 10,
+    color: '#bbf7d0',
+    fontSize: 12,
+    fontWeight: '800',
   },
   insightsChartHeader: {
     flexDirection: 'row',
@@ -2700,13 +4476,14 @@ const styles = StyleSheet.create({
   },
   insightsChartValue: {
     color: '#e2e8f0',
-    fontSize: 9,
-    fontWeight: '700',
+    fontSize: 10,
+    fontWeight: '800',
   },
   insightsChartLabel: {
     color: '#94a3b8',
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '700',
+    marginTop: 2,
   },
   insightsPromptCard: {
     borderWidth: 1,
@@ -2724,10 +4501,16 @@ const styles = StyleSheet.create({
   insightsDetailScreen: {
     flex: 1,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    borderRadius: 14,
+    borderColor: 'rgba(255,255,255,0.14)',
+    borderRadius: 18,
     padding: 14,
-    backgroundColor: 'rgba(15,23,42,0.4)',
+    backgroundColor: 'rgba(15,23,42,0.5)',
+  },
+  insightsDetailScroll: {
+    flex: 1,
+  },
+  insightsDetailScrollContent: {
+    paddingBottom: 18,
   },
   insightsDetailHeader: {
     flexDirection: 'row',
@@ -2755,8 +4538,8 @@ const styles = StyleSheet.create({
   },
   insightsDetailSubtitle: {
     color: '#94a3b8',
-    fontSize: 11,
-    marginTop: 2,
+    fontSize: 12,
+    marginTop: 4,
     fontWeight: '600',
   },
   goalsScreen: {
@@ -2897,6 +4680,9 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.18)',
     backgroundColor: 'rgba(15,23,42,0.98)',
     padding: 14,
+  },
+  createPostKeyboardAvoiding: {
+    width: '100%',
   },
   challengeModalTitle: {
     color: '#f8fafc',
@@ -3045,6 +4831,14 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 12,
     justifyContent: 'space-between',
+    overflow: 'hidden',
+  },
+  communityHeroImage: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  communityHeroScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(3, 7, 18, 0.42)',
   },
   communityHeroActions: {
     flexDirection: 'row',
@@ -3277,6 +5071,19 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     height: 318,
   },
+  eventsLoadingText: {
+    color: '#93c5fd',
+    fontSize: 12,
+    fontWeight: '700',
+    paddingTop: 6,
+    paddingBottom: 2,
+  },
+  eventsEmptyText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    textAlign: 'center',
+    paddingTop: 18,
+  },
   eventRow: {
     flexDirection: 'row',
     gap: 12,
@@ -3332,18 +5139,29 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   eventRsvp: {
-    color: '#86efac',
     fontSize: 12,
     fontWeight: '700',
     marginTop: 4,
+  },
+  eventSourceTicketmaster: {
+    color: '#60a5fa',
+  },
+  eventSourceEventbrite: {
+    color: '#fb923c',
+  },
+  eventStatusLive: {
+    color: '#86efac',
+  },
+  eventStatusPassed: {
+    color: '#fca5a5',
   },
   progressPostCard: {
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.14)',
     borderRadius: 14,
     backgroundColor: 'rgba(10,14,24,0.82)',
-    padding: 12,
-    marginBottom: 10,
+    padding: 14,
+    marginBottom: 14,
   },
   progressPostHeader: {
     flexDirection: 'row',
@@ -3367,19 +5185,39 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 10,
   },
+  progressPostStatus: {
+    color: '#93c5fd',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: -2,
+    marginBottom: 8,
+  },
   progressPostImage: {
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
     backgroundColor: 'rgba(30,41,59,0.7)',
-    height: 148,
+    width: '100%',
+    aspectRatio: 1,
+    minHeight: 280,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  progressPostImageActual: {
+    width: '100%',
+    height: '100%',
   },
   progressPostImageText: {
     color: '#94a3b8',
     fontSize: 12,
     fontWeight: '600',
+  },
+  createPostPreviewImage: {
+    width: '100%',
+    height: 144,
+    borderRadius: 12,
+    marginBottom: 12,
   },
   leaderRow: {
     flexDirection: 'row',
@@ -3451,7 +5289,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 30,
     left: '50%',
-    transform: [{ translateX: -24 }],
+    width: 92,
+    transform: [{ translateX: -46 }],
     alignItems: 'center',
   },
   alertIconWrap: {
@@ -3481,6 +5320,98 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     marginTop: 2,
+    textAlign: 'center',
+    width: '100%',
+  },
+  alertsModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(2,6,23,0.7)',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 36,
+  },
+  alertsModalCard: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: '#111827',
+    padding: 12,
+  },
+  alertsModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  alertsBackBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.26)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(15,23,42,0.7)',
+  },
+  alertsBackText: {
+    color: '#f8fafc',
+    fontSize: 15,
+    lineHeight: 15,
+    fontWeight: '800',
+  },
+  alertsHeaderTextWrap: {
+    flex: 1,
+  },
+  alertsTitle: {
+    color: '#f8fafc',
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  alertsSubtitle: {
+    color: '#94a3b8',
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  alertsEmptyCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.25)',
+    borderRadius: 12,
+    backgroundColor: 'rgba(15,23,42,0.45)',
+    paddingVertical: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  alertsEmptyText: {
+    color: '#cbd5e1',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  alertsCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.45)',
+    borderRadius: 12,
+    backgroundColor: 'rgba(127,29,29,0.22)',
+    padding: 12,
+    marginBottom: 10,
+  },
+  alertsCardTitle: {
+    color: '#fecaca',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  alertsCardDetail: {
+    color: '#e2e8f0',
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 4,
+  },
+  alertsCardSeverity: {
+    color: '#fca5a5',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 7,
   },
   weatherText: {
     color: '#fff',
@@ -3732,7 +5663,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   quickItem: {
-    width: '16%',
+    flex: 1,
+    minWidth: 0,
     alignItems: 'center',
     gap: 7,
   },
@@ -3856,22 +5788,44 @@ const styles = StyleSheet.create({
   navItem: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2,
+    gap: 4,
+    position: 'relative',
   },
   navIcon: {
     color: '#52525b',
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: '700',
-    lineHeight: 22,
+    lineHeight: 26,
   },
   navText: {
     color: '#52525b',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
-    lineHeight: 11,
+    lineHeight: 13,
   },
   navActive: {
     color: '#3b82f6',
+  },
+  navAlertBadge: {
+    position: 'absolute',
+    top: -8,
+    right: 2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: '#dc2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#111827',
+    zIndex: 2,
+  },
+  navAlertBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+    lineHeight: 11,
   },
   sidebarOverlay: {
     position: 'absolute',
@@ -3898,8 +5852,8 @@ const styles = StyleSheet.create({
   },
   sidebarTitle: {
     color: '#f3f4f6',
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '800',
   },
   sidebarClose: {
     color: '#f3f4f6',
@@ -3907,17 +5861,20 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   sidebarItem: {
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-    borderRadius: 10,
-    paddingVertical: 11,
-    paddingHorizontal: 12,
-    marginBottom: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 2,
+    marginBottom: 6,
   },
   sidebarItemText: {
     color: '#e5e7eb',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
+  },
+  sidebarDivider: {
+    height: 1,
+    backgroundColor: 'rgba(148,163,184,0.25)',
+    marginVertical: 8,
   },
   sidebarSection: {
     marginTop: 2,
@@ -3928,30 +5885,39 @@ const styles = StyleSheet.create({
   },
   sidebarSectionTitle: {
     color: '#e5e7eb',
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '800',
     marginBottom: 10,
+    textDecorationLine: 'underline',
   },
   demoToggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
+    minHeight: 52,
+    paddingVertical: 10,
+    marginBottom: 6,
+  },
+  demoToggleRowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   demoToggleLabel: {
     color: '#d1d5db',
-    fontSize: 12,
+    fontSize: 15,
     flex: 1,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   demoTogglePill: {
-    minWidth: 48,
+    minWidth: 66,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.24)',
     alignItems: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
     backgroundColor: 'rgba(255,255,255,0.08)',
   },
   demoTogglePillActive: {
@@ -3960,16 +5926,36 @@ const styles = StyleSheet.create({
   },
   demoTogglePillText: {
     color: '#e5e7eb',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
   },
   demoTogglePillTextActive: {
     color: '#93c5fd',
   },
+  demoDropdownBtn: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
+    backgroundColor: 'rgba(15,23,42,0.45)',
+  },
+  demoDropdownText: {
+    color: '#cbd5e1',
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 13,
+  },
+  demoDropdownList: {
+    marginTop: 2,
+    marginLeft: 10,
+  },
   demoHelperText: {
-    marginTop: 8,
+    marginTop: 10,
     color: '#9ca3af',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '500',
   },
 });

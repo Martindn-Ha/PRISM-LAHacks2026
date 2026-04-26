@@ -1,5 +1,6 @@
 {
   "expo": {
+    "plugins": ["./plugins/withStripIosPushEntitlement.js"],
     "name": "InsightsScreenExpo",
     "slug": "InsightsScreenExpo",
     "version": "1.0.0",
@@ -15,6 +16,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.martindnha.InsightsScreenExpo",
+      "entitlements": {
+        "com.apple.developer.healthkit": true
+      },
       "infoPlist": {
         "NSHealthShareUsageDescription": "This app reads your Apple Health data to show personalized insights.",
         "NSHealthUpdateUsageDescription": "This app may write selected wellness updates to Apple Health."

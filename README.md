@@ -1,53 +1,130 @@
 # LAHacks2026
 
-## InsightsScreenExpo iPhone + Apple HealthKit Setup
+Connected wellness demo app with:
+- Expo iOS client (`InsightsScreenExpo`)
+- Firebase Cloud Functions backend (`functions`)
+- Cloudinary media uploads
+- Firestore-backed community progress posts
+- Ticketmaster + Eventbrite event aggregation for Events + Map views
+- Optional geocoding fallback when providers return address text without coordinates
 
-This project includes Apple HealthKit-backed Insights in `InsightsScreenExpo`.
+## Project Structure
 
-### Requirements
+- `InsightsScreenExpo/`: Expo React Native app
+- `functions/`: Firebase HTTPS functions
+- `firebase.json`, `.firebaserc`: Firebase project config
 
-- iPhone device testing (not Expo Go-only).
-- Xcode with the app target configured under your signing team.
-- `HealthKit` capability enabled in Xcode target:
-  - `ios/InsightsScreenExpo.xcworkspace`
-  - Target `InsightsScreenExpo` -> `Signing & Capabilities` -> `+ Capability` -> `HealthKit`
-- Health usage keys in `Info.plist`:
-  - `NSHealthShareUsageDescription`
-  - `NSHealthUpdateUsageDescription`
+## Current Feature Set
 
-### Run Commands (in order)
+- **Progress Board pipeline**
+  - User can publish image-based progress posts.
+  - Image uploads to Cloudinary.
+  - Firestore stores post metadata.
+  - Cloudinary URL variants are derived for feed + thumbnail use.
+- **Community Events**
+  - `communityEvents` function merges Ticketmaster + Eventbrite.
+  - App Events tab renders live Upcoming/Past events.
+  - Event source links open in browser.
+- **Map integration**
+  - Map chips include `All`, `Ticketmaster`, and `Eventbrite`.
+  - Provider events are shown as map markers at event coordinates.
+  - If an event has address text but no coordinates, backend can geocode and fill lat/lon.
+- **Health/Insights**
+  - iOS Apple Health integration for Insights workflows.
+
+## Environment Variables
+
+Do not commit real `.env` files. Use the provided examples:
+
+- `InsightsScreenExpo/.env.example`
+- `functions/.env.example`
+
+### App (`InsightsScreenExpo/.env`)
 
 ```bash
-cd "/Users/adminpersonberg/Desktop/LAHacks2026/InsightsScreenExpo"
+# Cloudinary
+EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME=
+EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET=
+EXPO_PUBLIC_COMMUNITY_SPOTLIGHT_IMAGE_URL=
+
+# Firebase Web App Config
+EXPO_PUBLIC_FIREBASE_API_KEY=
+EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=
+EXPO_PUBLIC_FIREBASE_PROJECT_ID=
+EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=
+EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+EXPO_PUBLIC_FIREBASE_APP_ID=
+
+# Backend endpoints
+EXPO_PUBLIC_ARISTA_CONTEXT_URL=
+EXPO_PUBLIC_ARISTA_COMMUNITY_EVENTS_URL=
+```
+
+### Functions (`functions/.env`)
+
+```bash
+TICKETMASTER_API_KEY=
+EVENTBRITE_PRIVATE_TOKEN=
+# Optional; if omitted, fallback geocoder is used with stricter rate limits
+GOOGLE_MAPS_API_KEY=
+```
+
+## Local app run (dev client on a device)
+
+`npx expo prebuild` generates **native** projects under `ios/` and `android/` (not web-only). After you add or change native modules, run prebuild (or clean/regenerate those folders) so the native projects match `app.json` and your dependencies.
+
+From `InsightsScreenExpo/`, iOS dev client on a **connected physical device** (`--device`):
+
+```bash
 npx expo prebuild
-```
-
-```bash
-cd "/Users/adminpersonberg/Desktop/LAHacks2026/InsightsScreenExpo/ios"
-pod install
-```
-
-```bash
-cd "/Users/adminpersonberg/Desktop/LAHacks2026/InsightsScreenExpo"
+cd ios && pod install && cd ..
 npx expo start --dev-client --lan --clear
 ```
 
-Open a second terminal:
+In a second terminal:
 
 ```bash
 cd "/Users/adminpersonberg/Desktop/LAHacks2026/InsightsScreenExpo"
 npx expo run:ios --device --no-bundler
 ```
 
-### Common Failures
+For a **physical Android device**, use `npx expo run:android --device` (after prebuild; use Gradle from `android/` as needed) instead of the `run:ios` line.
 
-- **No script URL**: Metro is not running/reachable. Keep `expo start --dev-client --lan --clear` running.
-- **Missing `com.apple.developer.healthkit` entitlement**: HealthKit capability is not enabled in the signed target/profile.
-- **Unable to trust developer app**: trust the developer profile on iPhone under `Settings -> General -> VPN & Device Management`.
+## Deploy Backend Functions
 
-### Verification
+From repo root:
 
-After install, open `Insights` and tap `Connect Apple Health`.
-If needed, verify access under iPhone settings:
+```bash
+npx firebase-tools deploy --only functions:communityEvents
+```
 
-- `Settings -> Privacy & Security -> Health -> InsightsScreenExpo`
+Deploy all functions:
+
+```bash
+npx firebase-tools deploy --only functions
+```
+
+## Firebase Config: Commit vs Ignore
+
+Commit:
+- `firebase.json`
+- `.firebaserc`
+- `functions/package.json`
+- `functions/package-lock.json`
+
+Ignore:
+- `InsightsScreenExpo/.env`
+- `functions/.env`
+- local credentials/service account files
+
+## Apple HealthKit Notes (iOS)
+
+Ensure:
+- Testing on a real iPhone (not Expo Go only)
+- Xcode target has HealthKit capability enabled
+- `Info.plist` contains health usage descriptions
+
+Common issues:
+- **No script URL**: keep Metro running with `expo start --dev-client`.
+- **Missing HealthKit entitlement**: capability/signing mismatch.
+- **Untrusted developer app**: trust profile in iPhone settings.
