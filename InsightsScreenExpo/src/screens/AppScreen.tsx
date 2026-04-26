@@ -15,19 +15,20 @@ import {
   Pressable,
   ScrollView,
   Share,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   useWindowDimensions,
   View,
 } from 'react-native';
-import Svg, { Circle, Defs, LinearGradient, Path, Stop, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop, Text as SvgText } from 'react-native-svg';
 import * as Location from 'expo-location';
 import * as Contacts from 'expo-contacts';
 import * as ImagePicker from 'expo-image-picker';
 import MapView, { Marker } from 'react-native-maps';
 import { addDoc, collection, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { getNextDemoScore, getScorePresentation } from '../services/scoringService';
+import { getScorePresentation } from '../services/scoringService';
 import { fetchCurrentWeather } from '../services/weatherService';
 import { styles } from '../styles/appStyles';
 import {
@@ -86,6 +87,137 @@ import type {
   ProgressBoardPost,
 } from '../types/experience';
 
+type DemoDriftModel = {
+  phase: number;
+  stressBias: number;
+  glucoseBias: number;
+  recoveryBias: number;
+  hydrationBias: number;
+  adherenceBias: number;
+};
+
+type DemoHighAlert = {
+  id: string;
+  title: string;
+  detail: string;
+  severity: 'High';
+};
+
+type AdvisorAlertSlideKey = 'glucose' | 'stress' | 'heartRate';
+
+type AdvisorSlide = {
+  key: AdvisorAlertSlideKey | 'steady';
+  message: string;
+};
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const normalize = (value: number, min: number, max: number) => clamp((value - min) / (max - min), 0, 1);
+const isDefined = <T,>(value: T | null | undefined): value is T => value != null;
+
+function buildInitialDriftModel(args: {
+  stressValue: number;
+  glucoseValue: number;
+  activitySleepMinutes: number;
+  activityWaterGlasses: number;
+  activityMedsTaken: number;
+}): DemoDriftModel {
+  return {
+    phase: 0,
+    stressBias: normalize(args.stressValue, 0, 100) - 0.5,
+    glucoseBias: normalize(args.glucoseValue, 70, 240) - 0.5,
+    recoveryBias: normalize(args.activitySleepMinutes, 180, 9 * 60 + 59) - 0.5,
+    hydrationBias: normalize(args.activityWaterGlasses, 0, 12) - 0.5,
+    adherenceBias: normalize(args.activityMedsTaken, 0, 2) - 0.5,
+  };
+}
+
+function getNextDriftSnapshot(model: DemoDriftModel, fastMode: boolean) {
+  const phaseStep = fastMode ? 0.34 : 0.16;
+  model.phase += phaseStep;
+  const dayRhythm = Math.sin(model.phase * 0.5);
+  const stressWave = Math.sin(model.phase * 1.1 + 0.8);
+  const glucoseWave = Math.sin(model.phase * 0.85 - 0.35);
+  const activityWave = Math.sin(model.phase * 1.45 + 0.25);
+
+  const stressNorm = clamp(0.5 + model.stressBias * 0.5 + stressWave * 0.22 - dayRhythm * 0.08, 0.08, 0.97);
+  const hydrationNorm = clamp(0.58 + model.hydrationBias * 0.55 - stressNorm * 0.14 + dayRhythm * 0.2, 0.05, 0.98);
+  const recoveryNorm = clamp(
+    0.52 + model.recoveryBias * 0.5 + dayRhythm * 0.22 - stressNorm * 0.22 + hydrationNorm * 0.1,
+    0.06,
+    0.98,
+  );
+  const adherenceNorm = clamp(0.6 + model.adherenceBias * 0.5 - stressNorm * 0.12 + recoveryNorm * 0.08, 0.1, 0.96);
+  const metabolicLoad = clamp(
+    stressNorm * 0.42 +
+      (1 - recoveryNorm) * 0.3 +
+      (1 - hydrationNorm) * 0.16 +
+      (1 - adherenceNorm) * 0.12,
+    0,
+    1,
+  );
+  const glucoseBase = 0.42 + model.glucoseBias * 0.5 + glucoseWave * 0.17 + stressNorm * 0.2 - hydrationNorm * 0.12 - adherenceNorm * 0.1;
+  const glucoseFloor = clamp((metabolicLoad - 0.45) * 1.25, 0, 0.62);
+  const glucoseNorm = clamp(Math.max(glucoseBase, glucoseFloor), 0.05, 0.99);
+
+  const cardiacLoad = clamp(stressNorm * 0.54 + metabolicLoad * 0.28 + activityWave * 0.08 - recoveryNorm * 0.08, 0, 1);
+  const hrBase = 0.31 + stressNorm * 0.4 + activityWave * 0.12 - recoveryNorm * 0.14;
+  const hrFloor = clamp((cardiacLoad - 0.4) * 1.15, 0, 0.6);
+  const hrNorm = clamp(Math.max(hrBase, hrFloor), 0.06, 0.98);
+
+  let glucose = clamp(Math.round(82 + glucoseNorm * 120), 70, 240);
+  const stress = clamp(Math.round(stressNorm * 100), 0, 100);
+  let heartRate = clamp(Math.round(52 + hrNorm * 56), 45, 130);
+  const sleepMinutes = clamp(Math.round(320 + recoveryNorm * 235), 180, 9 * 60 + 59);
+
+  // Progressively rise through the "day", with occasional faster windows from activity.
+  const stepDelta = clamp(Math.round(45 + (0.25 + activityWave * 0.35 + dayRhythm * 0.45) * 230), 15, 320);
+  const water = clamp(Math.round(hydrationNorm * 12), 0, 12);
+  const meds = adherenceNorm >= 0.72 ? 2 : adherenceNorm >= 0.4 ? 1 : 0;
+
+  const score = clamp(
+    Math.round(
+      100 -
+        (glucoseNorm * 26 +
+          stressNorm * 26 +
+          hrNorm * 20 +
+          (1 - recoveryNorm) * 14 +
+          (1 - hydrationNorm) * 6 +
+          (1 - adherenceNorm) * 4 +
+          metabolicLoad * 8),
+    ),
+    38,
+    92,
+  );
+
+  // Keep score and card vitals consistent for demos:
+  // when score is very low, glucose and heart rate should visibly trend high.
+  if (score <= 50) {
+    const severity = normalize(50 - score, 0, 12); // 50 -> 0, 38 -> 1
+    const glucoseFloor = Math.round(170 + severity * 20); // 170..190
+    const hrFloor = Math.round(95 + severity * 13); // 95..108
+    glucose = Math.max(glucose, glucoseFloor);
+    heartRate = Math.max(heartRate, hrFloor);
+  } else if (score <= 60) {
+    const severity = normalize(60 - score, 0, 10); // 60 -> 0, 50 -> 1
+    const glucoseFloor = Math.round(150 + severity * 20); // 150..170
+    const hrFloor = Math.round(88 + severity * 7); // 88..95
+    glucose = Math.max(glucose, glucoseFloor);
+    heartRate = Math.max(heartRate, hrFloor);
+  }
+
+  return {
+    score,
+    glucose,
+    stress,
+    heartRate,
+    sleepMinutes,
+    stepDelta,
+    water,
+    meds,
+  };
+}
+
 export default function App() {
   const { width: windowWidth } = useWindowDimensions();
   const starredGalleryPageWidth = Math.max(0, windowWidth - 32);
@@ -118,6 +250,12 @@ export default function App() {
   const [activitySleepMinutes, setActivitySleepMinutes] = useState(435);
   const [activityMedsTaken, setActivityMedsTaken] = useState(2);
   const [activityWaterGlasses, setActivityWaterGlasses] = useState(6);
+  const [advisorGallerySlideWidth, setAdvisorGallerySlideWidth] = useState(() => Math.max(200, windowWidth - 32 - 26 - 88 - 10));
+  const [advisorGalleryIndex, setAdvisorGalleryIndex] = useState(0);
+  const [advisorGalleryShellLayout, setAdvisorGalleryShellLayout] = useState({ w: 0, h: 0 });
+  const [advisorGalleryScrollX, setAdvisorGalleryScrollX] = useState(0);
+  const advisorGalleryEdgeGid = useMemo(() => `ag-${Math.random().toString(36).slice(2, 10)}`, []);
+  const [dismissedAdvisorSlideKeys, setDismissedAdvisorSlideKeys] = useState<Partial<Record<AdvisorAlertSlideKey, true>>>({});
   const [useDeviceLocation, setUseDeviceLocation] = useState(false);
   const [locationStatus, setLocationStatus] = useState<'off' | 'granted' | 'denied'>('off');
   const [locationCoords, setLocationCoords] = useState<{ lat: number; lon: number } | null>(null);
@@ -242,22 +380,39 @@ export default function App() {
   const [weatherF, setWeatherF] = useState(72);
   const [weatherLabel, setWeatherLabel] = useState('Sunny');
   const [foodSuggestionCollapsed, setFoodSuggestionCollapsed] = useState(false);
-  const scoreDirectionRef = useRef<1 | -1>(1);
+  const [foodSuggestionUnlocked, setFoodSuggestionUnlocked] = useState(false);
+  const demoDriftModelRef = useRef<DemoDriftModel>(
+    buildInitialDriftModel({
+      stressValue,
+      glucoseValue,
+      activitySleepMinutes,
+      activityWaterGlasses,
+      activityMedsTaken,
+    }),
+  );
   const previousAlertDemoEnabledRef = useRef(false);
   const heartPulseAnim = useRef(new Animated.Value(0)).current;
   const alertBadgeBounceAnim = useRef(new Animated.Value(0)).current;
   const displayScore = Math.round(healthScore);
+  const glucoseNow = Math.round(glucoseValue);
+  const stressNow = Math.round(stressValue);
+  const heartRateNow = Math.round(heartRateCardValue);
   const scorePresentation = getScorePresentation(displayScore);
-  const alertCount = demoAlertEnabled ? 3 : 0;
   const allDemoToolsEnabled =
     demoScoreDriftEnabled && Object.values(demoDashboardValueDrift).every(Boolean);
-  const alertItems = demoAlertEnabled
-    ? [
-        { id: 'a1', title: 'Abnormal Glucose', detail: 'Glucose measured at 192 mg/dL.', severity: 'High' },
-        { id: 'a2', title: 'Elevated Stress', detail: 'Stress index reached 84/100.', severity: 'High' },
-        { id: 'a3', title: 'Abnormal Heart Rate', detail: 'Resting heart rate detected at 104 bpm.', severity: 'High' },
-      ]
-    : [];
+  const highAlertCandidates: Array<DemoHighAlert | null> = [
+    glucoseNow >= 170
+      ? { id: 'a1', title: 'Abnormal Glucose', detail: `Glucose measured at ${glucoseNow} mg/dL.`, severity: 'High' }
+      : null,
+    stressNow >= 70
+      ? { id: 'a2', title: 'Elevated Stress', detail: `Stress index at ${stressNow}/100.`, severity: 'High' }
+      : null,
+    heartRateNow >= 95
+      ? { id: 'a3', title: 'Abnormal Heart Rate', detail: `Resting heart rate at ${heartRateNow} bpm.`, severity: 'High' }
+      : null,
+  ];
+  const alertItems = demoAlertEnabled ? highAlertCandidates.filter(isDefined) : [];
+  const alertCount = alertItems.length;
   const toggleDashboardValueDrift = (key: keyof DashboardValueDriftToggles) => {
     setDemoDashboardValueDrift((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -324,6 +479,65 @@ export default function App() {
       color: '#C7A77D',
     },
   ];
+
+  /** Same HIGH bands as alert push content: glucose ≥170, stress ≥70, heart rate ≥95. */
+  const advisorSlides = useMemo((): AdvisorSlide[] => {
+    const slides: AdvisorSlide[] = [];
+    if (glucoseNow >= 170 && !dismissedAdvisorSlideKeys.glucose) {
+      slides.push({ key: 'glucose', message: 'Glucose is spiking. Need recommendations?' });
+    }
+    if (stressNow >= 70 && !dismissedAdvisorSlideKeys.stress) {
+      slides.push({ key: 'stress', message: 'Stress is spiking. Need recommendations?' });
+    }
+    if (heartRateNow >= 95 && !dismissedAdvisorSlideKeys.heartRate) {
+      slides.push({ key: 'heartRate', message: 'Heart rate is spiking. Need recommendations?' });
+    }
+    if (slides.length === 0) {
+      slides.push({ key: 'steady', message: "You're doing great!" });
+    }
+    return slides;
+  }, [dismissedAdvisorSlideKeys, glucoseNow, heartRateNow, stressNow]);
+
+  const advisorSlideKeySignature = advisorSlides.map((s) => s.key).join('-');
+
+  useEffect(() => {
+    setDismissedAdvisorSlideKeys((prev) => {
+      const next = { ...prev };
+      if (glucoseNow < 170) {
+        delete next.glucose;
+      }
+      if (stressNow < 70) {
+        delete next.stress;
+      }
+      if (heartRateNow < 95) {
+        delete next.heartRate;
+      }
+      const unchanged =
+        !!next.glucose === !!prev.glucose && !!next.stress === !!prev.stress && !!next.heartRate === !!prev.heartRate;
+      return unchanged ? prev : next;
+    });
+  }, [glucoseNow, heartRateNow, stressNow]);
+
+  useEffect(() => {
+    setAdvisorGalleryIndex(0);
+  }, [advisorSlideKeySignature]);
+
+  useEffect(() => {
+    setAdvisorGalleryScrollX(0);
+  }, [advisorSlideKeySignature, advisorGallerySlideWidth]);
+
+  useEffect(() => {
+    if (advisorSlideKeySignature === 'steady') {
+      setFoodSuggestionUnlocked(false);
+    }
+  }, [advisorSlideKeySignature]);
+
+  const advisorGalleryMaxScrollX = Math.max(0, (advisorSlides.length - 1) * advisorGallerySlideWidth);
+  const advisorGalleryScrollNorm =
+    advisorGalleryMaxScrollX <= 0 ? 0.5 : Math.min(1, Math.max(0, advisorGalleryScrollX / advisorGalleryMaxScrollX));
+  const advisorGalleryLeftEdgeOpacity = 0.4 + 0.35 * (1 - advisorGalleryScrollNorm);
+  const advisorGalleryRightEdgeOpacity = 0.4 + 0.35 * advisorGalleryScrollNorm;
+
   const centerX = 160;
   const centerY = 174;
   const startDeg = 205;
@@ -1585,19 +1799,43 @@ export default function App() {
   }, [useDeviceLocation, locationCoords]);
 
   useEffect(() => {
-    if (!demoScoreDriftEnabled) {
+    const anyDashboardDriftEnabled = Object.values(demoDashboardValueDrift).some(Boolean);
+    const anyDemoDriftEnabled = demoScoreDriftEnabled || anyDashboardDriftEnabled;
+    if (!anyDemoDriftEnabled) {
       return;
     }
-    const intervalMs = demoFastDriftEnabled ? 380 : 700;
+
+    const intervalMs = demoFastDriftEnabled ? 380 : 760;
     const interval = setInterval(() => {
-      setHealthScore((prev: number) => {
-        const result = getNextDemoScore(prev, scoreDirectionRef.current, demoFastDriftEnabled);
-        scoreDirectionRef.current = result.nextDirection;
-        return result.next;
-      });
+      const snapshot = getNextDriftSnapshot(demoDriftModelRef.current, demoFastDriftEnabled);
+
+      if (demoScoreDriftEnabled) {
+        setHealthScore(snapshot.score);
+      }
+      if (demoDashboardValueDrift.glucose) {
+        setGlucoseValue(snapshot.glucose);
+      }
+      if (demoDashboardValueDrift.stress) {
+        setStressValue(snapshot.stress);
+      }
+      if (demoDashboardValueDrift.heartRateCard) {
+        setHeartRateCardValue(snapshot.heartRate);
+      }
+      if (demoDashboardValueDrift.steps) {
+        setActivitySteps((prev) => clamp(prev + snapshot.stepDelta, 0, 25000));
+      }
+      if (demoDashboardValueDrift.sleep) {
+        setActivitySleepMinutes(snapshot.sleepMinutes);
+      }
+      if (demoDashboardValueDrift.meds) {
+        setActivityMedsTaken(snapshot.meds);
+      }
+      if (demoDashboardValueDrift.water) {
+        setActivityWaterGlasses(snapshot.water);
+      }
     }, intervalMs);
     return () => clearInterval(interval);
-  }, [demoScoreDriftEnabled, demoFastDriftEnabled]);
+  }, [demoScoreDriftEnabled, demoDashboardValueDrift, demoFastDriftEnabled]);
 
   useEffect(() => {
     const pulseLoop = Animated.loop(
@@ -1642,41 +1880,6 @@ export default function App() {
     return () => bounceLoop.stop();
   }, [alertCount, alertBadgeBounceAnim]);
 
-  useEffect(() => {
-    const anyDashboardDriftEnabled = Object.values(demoDashboardValueDrift).some(Boolean);
-    if (!anyDashboardDriftEnabled) {
-      return;
-    }
-    const intervalMs = demoFastDriftEnabled ? 380 : 760;
-    const interval = setInterval(() => {
-      const jitter = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
-      if (demoDashboardValueDrift.glucose) {
-        setGlucoseValue((prev) => Math.max(70, Math.min(240, prev + jitter(-5, 6))));
-      }
-      if (demoDashboardValueDrift.stress) {
-        setStressValue((prev) => Math.max(0, Math.min(100, prev + jitter(-4, 5))));
-      }
-      if (demoDashboardValueDrift.heartRateCard) {
-        setHeartRateCardValue((prev) => Math.max(45, Math.min(130, prev + jitter(-3, 4))));
-      }
-      if (demoDashboardValueDrift.steps) {
-        setActivitySteps((prev) => Math.max(0, Math.min(25000, prev + jitter(40, 280))));
-      }
-      if (demoDashboardValueDrift.sleep) {
-        setActivitySleepMinutes((prev) => Math.max(180, Math.min(9 * 60 + 59, prev + jitter(-12, 14))));
-      }
-      if (demoDashboardValueDrift.meds) {
-        setActivityMedsTaken((prev) => {
-          const next = prev + jitter(-1, 1);
-          return Math.max(0, Math.min(2, next));
-        });
-      }
-      if (demoDashboardValueDrift.water) {
-        setActivityWaterGlasses((prev) => Math.max(0, Math.min(12, prev + jitter(-1, 1))));
-      }
-    }, intervalMs);
-    return () => clearInterval(interval);
-  }, [demoDashboardValueDrift, demoFastDriftEnabled]);
 
   useEffect(() => {
     const wasEnabled = previousAlertDemoEnabledRef.current;
@@ -1701,36 +1904,28 @@ export default function App() {
             return;
           }
         }
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: 'Abnormal Glucose',
-            body: 'Glucose at 192 mg/dL.',
-            sound: 'default',
-          },
-          trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 1, repeats: false },
-        });
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: 'Elevated Stress',
-            body: 'Stress index reached 84/100.',
-            sound: 'default',
-          },
-          trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 2, repeats: false },
-        });
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: 'Abnormal Heart Rate',
-            body: 'Resting heart rate at 104 bpm.',
-            sound: 'default',
-          },
-          trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 3, repeats: false },
-        });
+        const pushAlerts = highAlertCandidates.filter(isDefined);
+        for (let i = 0; i < pushAlerts.length; i += 1) {
+          const alert = pushAlerts[i];
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: alert.title,
+              body: alert.detail,
+              sound: 'default',
+            },
+            trigger: {
+              type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+              seconds: i + 1,
+              repeats: false,
+            },
+          });
+        }
       } catch {
         // Ignore notification failures in demo mode.
       }
     }
     void sendAlertDemoNotifications();
-  }, [demoAlertEnabled]);
+  }, [demoAlertEnabled, highAlertCandidates]);
 
   useEffect(() => {
     if (activeTab !== 'Map') {
@@ -2049,25 +2244,234 @@ export default function App() {
               <Text style={styles.scoreSub}>{scorePresentation.subtitle}</Text>
             </View>
             <View style={styles.grid}>{dashboardMetrics.map((item) => (<View key={item.label} style={styles.glassCard}><Text style={styles.metricLabel}>{item.label}</Text><View style={styles.metricValueRow}><Text style={styles.metricValue}>{item.value}</Text><Text style={styles.metricUnit}>{item.unit}</Text></View><Text style={[styles.metricStatus, { color: item.statusColor }]}>{item.status}</Text></View>))}</View>
-            <View style={styles.glassCardLarge}>
-              <Text style={styles.cardBadge}>NEURAL AI ADVISOR</Text>
-              <View style={styles.advisorCardBody}>
-                <Image source={require('../../assets/chanmoji.png')} resizeMode="contain" style={styles.advisorImage} />
-                <View style={styles.advisorContent}>
-                  <Text style={styles.cardTitle}>Dr. Chan</Text>
-                  <Text style={styles.cardText}>Glucose high. Need recommendations?</Text>
-                  <View style={styles.row}>
-                    <TouchableOpacity style={styles.primaryBtn}>
-                      <Text style={styles.primaryBtnText}>Suggestions</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.secondaryBtn}>
-                      <Text style={styles.secondaryBtnText}>Not Now</Text>
-                    </TouchableOpacity>
+            <View style={styles.neuralAdvisorSection}>
+              <View style={styles.neuralAdvisorDivider} />
+              <View style={styles.neuralAdvisorInner}>
+                <Text style={styles.cardBadge}>NEURAL AI ADVISOR</Text>
+                <View style={styles.advisorCardBody}>
+                  <Image source={require('../../assets/chanmoji.png')} resizeMode="contain" style={styles.advisorImage} />
+                  <View
+                    style={styles.advisorContent}
+                    onLayout={(e) => {
+                      const w = Math.floor(e.nativeEvent.layout.width);
+                      if (w > 1 && Math.abs(w - advisorGallerySlideWidth) > 2) {
+                        setAdvisorGallerySlideWidth(w);
+                      }
+                    }}
+                  >
+                    <Text style={styles.cardTitle}>Dr. Chan</Text>
+                    <View
+                      style={styles.neuralAdvisorGalleryShell}
+                      onLayout={(e) => {
+                        const { width, height } = e.nativeEvent.layout;
+                        if (width > 0 && height > 0) {
+                          setAdvisorGalleryShellLayout((prev) =>
+                            prev.w === width && prev.h === height ? prev : { w: width, h: height },
+                          );
+                        }
+                      }}
+                    >
+                      {advisorGalleryShellLayout.w > 48 &&
+                      advisorGalleryShellLayout.h > 0 &&
+                      advisorSlides.length > 0 ? (
+                        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+                          <Svg height={advisorGalleryShellLayout.h} width={advisorGalleryShellLayout.w}>
+                            <Defs>
+                              <LinearGradient id={`${advisorGalleryEdgeGid}-L`} x1="0" y1="0" x2="1" y2="0">
+                                <Stop offset="0" stopColor="#020617" stopOpacity="0.34" />
+                                <Stop offset="0.55" stopColor="#020617" stopOpacity="0.1" />
+                                <Stop offset="1" stopColor="#020617" stopOpacity="0" />
+                              </LinearGradient>
+                              <LinearGradient id={`${advisorGalleryEdgeGid}-R`} x1="1" y1="0" x2="0" y2="0">
+                                <Stop offset="0" stopColor="#020617" stopOpacity="0.34" />
+                                <Stop offset="0.55" stopColor="#020617" stopOpacity="0.1" />
+                                <Stop offset="1" stopColor="#020617" stopOpacity="0" />
+                              </LinearGradient>
+                              <LinearGradient id={`${advisorGalleryEdgeGid}-HL`} x1="0" y1="0" x2="1" y2="0">
+                                <Stop offset="0" stopColor="#f8fafc" stopOpacity="0.07" />
+                                <Stop offset="0.4" stopColor="#f8fafc" stopOpacity="0.02" />
+                                <Stop offset="1" stopColor="#f8fafc" stopOpacity="0" />
+                              </LinearGradient>
+                              <LinearGradient id={`${advisorGalleryEdgeGid}-HR`} x1="1" y1="0" x2="0" y2="0">
+                                <Stop offset="0" stopColor="#f8fafc" stopOpacity="0.07" />
+                                <Stop offset="0.4" stopColor="#f8fafc" stopOpacity="0.02" />
+                                <Stop offset="1" stopColor="#f8fafc" stopOpacity="0" />
+                              </LinearGradient>
+                            </Defs>
+                            <Rect
+                              fill={`url(#${advisorGalleryEdgeGid}-L)`}
+                              height={advisorGalleryShellLayout.h}
+                              opacity={advisorGalleryLeftEdgeOpacity}
+                              width={20}
+                              x={0}
+                              y={0}
+                            />
+                            <Rect
+                              fill={`url(#${advisorGalleryEdgeGid}-HL)`}
+                              height={advisorGalleryShellLayout.h}
+                              opacity={advisorGalleryLeftEdgeOpacity * 0.85}
+                              width={12}
+                              x={0}
+                              y={0}
+                            />
+                            <Rect
+                              fill={`url(#${advisorGalleryEdgeGid}-R)`}
+                              height={advisorGalleryShellLayout.h}
+                              opacity={advisorGalleryRightEdgeOpacity}
+                              width={20}
+                              x={advisorGalleryShellLayout.w - 20}
+                              y={0}
+                            />
+                            <Rect
+                              fill={`url(#${advisorGalleryEdgeGid}-HR)`}
+                              height={advisorGalleryShellLayout.h}
+                              opacity={advisorGalleryRightEdgeOpacity * 0.85}
+                              width={12}
+                              x={advisorGalleryShellLayout.w - 12}
+                              y={0}
+                            />
+                          </Svg>
+                        </View>
+                      ) : null}
+                      <ScrollView
+                        key={advisorSlideKeySignature}
+                        decelerationRate="fast"
+                        horizontal
+                        nestedScrollEnabled
+                        onMomentumScrollEnd={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+                          const w = advisorGallerySlideWidth;
+                          if (w <= 0) {
+                            return;
+                          }
+                          const x = e.nativeEvent.contentOffset.x;
+                          const next = Math.round(x / w);
+                          const max = Math.max(0, advisorSlides.length - 1);
+                          const clamped = Math.min(Math.max(0, next), max);
+                          setAdvisorGalleryIndex(clamped);
+                          setAdvisorGalleryScrollX(clamped * w);
+                        }}
+                        onScroll={(e) => {
+                          setAdvisorGalleryScrollX(e.nativeEvent.contentOffset.x);
+                        }}
+                        pagingEnabled
+                        removeClippedSubviews={false}
+                        scrollEventThrottle={24}
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.neuralAdvisorGalleryScroll}
+                      >
+                        {advisorSlides.map((slide) => (
+                          <View
+                            key={slide.key}
+                            style={[
+                              styles.advisorGallerySlide,
+                              slide.key === 'steady' && styles.advisorGallerySlideSteadyOnly,
+                              { width: advisorGallerySlideWidth },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.advisorGallerySlideText,
+                                slide.key === 'steady' && styles.advisorGallerySlideTextSteady,
+                              ]}
+                            >
+                              {slide.message}
+                            </Text>
+                            {slide.key !== 'steady' ? (
+                              <View style={styles.advisorGalleryBtnRow}>
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    setFoodSuggestionUnlocked(true);
+                                    setFoodSuggestionCollapsed(false);
+                                  }}
+                                  style={styles.advisorGalleryPrimaryBtn}
+                                >
+                                  <Text style={styles.advisorGalleryPrimaryBtnText}>Suggestions</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    setDismissedAdvisorSlideKeys((prev) => ({ ...prev, [slide.key]: true }));
+                                  }}
+                                  style={styles.advisorGallerySecondaryBtn}
+                                >
+                                  <Text style={styles.advisorGallerySecondaryBtnText}>Not Now</Text>
+                                </TouchableOpacity>
+                              </View>
+                            ) : null}
+                          </View>
+                        ))}
+                      </ScrollView>
+                      {advisorGalleryShellLayout.w > 48 && advisorGalleryShellLayout.h > 0 ? (
+                        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+                          <Svg height={advisorGalleryShellLayout.h} width={advisorGalleryShellLayout.w}>
+                            <Defs>
+                              <LinearGradient id={`${advisorGalleryEdgeGid}-TF-L`} x1="0" y1="0" x2="1" y2="0">
+                                <Stop offset="0" stopColor="#111827" stopOpacity="1" />
+                                <Stop offset="0.38" stopColor="#111827" stopOpacity="0.45" />
+                                <Stop offset="1" stopColor="#111827" stopOpacity="0" />
+                              </LinearGradient>
+                              <LinearGradient id={`${advisorGalleryEdgeGid}-TF-R`} x1="1" y1="0" x2="0" y2="0">
+                                <Stop offset="0" stopColor="#111827" stopOpacity="1" />
+                                <Stop offset="0.38" stopColor="#111827" stopOpacity="0.45" />
+                                <Stop offset="1" stopColor="#111827" stopOpacity="0" />
+                              </LinearGradient>
+                            </Defs>
+                            <Rect
+                              fill={`url(#${advisorGalleryEdgeGid}-TF-L)`}
+                              height={advisorGalleryShellLayout.h}
+                              width={36}
+                              x={0}
+                              y={0}
+                            />
+                            <Rect
+                              fill={`url(#${advisorGalleryEdgeGid}-TF-R)`}
+                              height={advisorGalleryShellLayout.h}
+                              width={36}
+                              x={advisorGalleryShellLayout.w - 36}
+                              y={0}
+                            />
+                          </Svg>
+                        </View>
+                      ) : null}
+                    </View>
+                    {advisorSlides.length > 1 ? (
+                      <View style={styles.advisorGalleryPagerDots}>
+                        {advisorSlides.map((slide, idx) => (
+                          <View
+                            key={`advisor-gallery-dot-${slide.key}`}
+                            style={[styles.advisorGalleryPagerDot, idx === advisorGalleryIndex && styles.advisorGalleryPagerDotActive]}
+                          />
+                        ))}
+                      </View>
+                    ) : null}
                   </View>
                 </View>
               </View>
+              <View style={styles.neuralAdvisorDivider} />
             </View>
-            <View style={[styles.glassCardLarge, styles.foodCard]}><View style={styles.foodCardHeader}><Text style={[styles.cardBadge, { color: '#EAB308' }]}>FOOD SUGGESTION</Text><TouchableOpacity onPress={() => setFoodSuggestionCollapsed((prev) => !prev)} style={styles.foodToggleBtn}><Text style={styles.foodToggleText}>{foodSuggestionCollapsed ? 'Expand' : 'Collapse'}</Text></TouchableOpacity></View>{!foodSuggestionCollapsed ? (<><Text style={styles.cardText}>Orange Chicken is available. Want a healthier option?</Text><TouchableOpacity style={styles.foodBtn}><Text style={styles.foodBtnText}>View Options</Text></TouchableOpacity></>) : null}</View>
+            {foodSuggestionUnlocked ? (
+              <View style={[styles.glassCardLarge, styles.foodCard]}>
+                <View style={styles.foodCardHeader}>
+                  <Text style={[styles.cardBadge, { color: '#EAB308' }]}>FOOD SUGGESTION</Text>
+                  <TouchableOpacity
+                    accessibilityLabel={foodSuggestionCollapsed ? 'Expand food suggestion' : 'Collapse food suggestion'}
+                    accessibilityRole="button"
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    onPress={() => setFoodSuggestionCollapsed((prev) => !prev)}
+                    style={styles.foodToggleBtn}
+                  >
+                    <Text style={styles.foodToggleGlyph}>×</Text>
+                  </TouchableOpacity>
+                </View>
+                {!foodSuggestionCollapsed ? (
+                  <>
+                    <Text style={styles.cardText}>Orange Chicken is available. Want a healthier option?</Text>
+                    <TouchableOpacity style={styles.foodBtn}>
+                      <Text style={styles.foodBtnText}>View Options</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : null}
+              </View>
+            ) : null}
             <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
             <DashboardQuickActionMetricsRow metrics={dashboardQuickMetrics} onMetricPress={(metric) => { setActiveTab('Insights'); setActiveInsightTab(metric); }} onReorder={setDashboardQuickMetrics} />
             <View style={styles.activityContainer}>{dashboardActivity.map((item, index) => (<View key={item.label} style={styles.activityItem}><View style={styles.activityTopRow}><ActivityMiniIcon label={item.label} /><View style={styles.activityTextStack}><Text style={styles.activityLabel}>{item.label}</Text><Text style={styles.activityValue}>{item.value}</Text></View></View><View style={styles.activityTrack}><View style={[styles.activityFill, { flex: item.fill, backgroundColor: item.color }]} /><View style={[styles.activityTrackRemainder, { flex: 100 - item.fill }]} /></View>{index < dashboardActivity.length - 1 ? <View style={styles.activityDivider} /> : null}</View>))}</View>

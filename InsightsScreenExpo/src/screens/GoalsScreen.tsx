@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, Share, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { CHALLENGE_FILTERS, GOALS_TABS } from '../constants/appNavigation';
 import { COMMUNITY_ACTIONS, COMMUNITY_OVERVIEW_DESCRIPTION } from '../constants/community';
@@ -10,6 +11,7 @@ import { styles } from '../styles/appStyles';
 type Props = any;
 
 export default function GoalsScreen(props: Props) {
+  const [selectedChallengeDetail, setSelectedChallengeDetail] = useState<any | null>(null);
   const {
     goalsTab, setGoalsTab, isInteractingWithEventsList, selectedJoinedCommunity, setSelectedJoinedCommunityName,
     showOverviewPopup, setShowOverviewPopup, selectedCommunityAction, setSelectedCommunityAction, openInviteContacts,
@@ -274,6 +276,12 @@ export default function GoalsScreen(props: Props) {
           ) : null}
           {goalsTab === 'Challenges' ? (
             <ScrollView bounces={false} overScrollMode="never" showsVerticalScrollIndicator={false} style={styles.goalsScroll}>
+              <View style={styles.challengeSummaryCard}>
+                <Text style={styles.challengeSummaryTitle}>Challenge Center</Text>
+                <Text style={styles.challengeSummaryText}>
+                  {filteredChallenges.length} active {challengeFilter.toLowerCase()} challenge{filteredChallenges.length === 1 ? '' : 's'}
+                </Text>
+              </View>
               <View style={styles.challengeFilterRow}>
                 {CHALLENGE_FILTERS.map((filter) => (
                   <TouchableOpacity
@@ -291,20 +299,116 @@ export default function GoalsScreen(props: Props) {
                 </TouchableOpacity>
               ) : null}
               {filteredChallenges.map((c, index) => (
-                <View
-                  key={`${c.type}-${c.title}-${index}`}
-                  style={[styles.goalsCard, c.type === 'community' ? styles.challengeCommunityCard : styles.challengePersonalCard]}
-                >
-                  <View style={styles.challengeHeaderRow}>
-                    <Text style={[styles.challengeTypeBadge, c.type === 'community' ? styles.challengeTypeCommunity : styles.challengeTypePersonal]}>
-                      {c.type === 'community' ? 'Community Challenge' : 'Personal Challenge'}
-                    </Text>
+                <View key={`${c.type}-${c.title}-${index}`} style={styles.challengeTimelineRow}>
+                  <View style={styles.challengeTimelineRail}>
+                    <View
+                      style={[
+                        styles.challengeTimelineNode,
+                        c.type === 'community' ? styles.challengeTimelineNodeCommunity : styles.challengeTimelineNodePersonal,
+                      ]}
+                    />
+                    {index < filteredChallenges.length - 1 ? <View style={styles.challengeTimelineLine} /> : null}
                   </View>
-                  <Text style={styles.goalsCardTitle}>{c.title}</Text>
-                  <Text style={styles.goalsCardDetail}>{c.detail}</Text>
-                  <Text style={styles.goalsCardMeta}>{c.members}</Text>
+                  <View
+                    style={[
+                      styles.challengeTimelineContent,
+                      c.type === 'community' ? styles.challengeTimelineContentCommunity : styles.challengeTimelineContentPersonal,
+                    ]}
+                  >
+                    <View style={styles.challengeHeaderRow}>
+                      <Text style={[styles.challengeTypeBadge, c.type === 'community' ? styles.challengeTypeCommunity : styles.challengeTypePersonal]}>
+                        {c.type === 'community' ? 'Community Challenge' : 'Personal Challenge'}
+                      </Text>
+                      <Text style={styles.challengeMembersPill}>{c.members}</Text>
+                    </View>
+                    <Text numberOfLines={2} style={styles.goalsCardTitle}>{c.title}</Text>
+                    <Text numberOfLines={3} style={styles.goalsCardDetail}>{c.detail}</Text>
+                    <View style={styles.challengeChipRow}>
+                      {c.type === 'community' ? (
+                        <View style={styles.challengeChip}>
+                          <Text style={styles.challengeChipText}>Team Goal</Text>
+                        </View>
+                      ) : null}
+                      <View style={[styles.challengeChip, styles.challengeChipMuted]}>
+                        <Text style={styles.challengeChipText}>7-day streak</Text>
+                      </View>
+                      <View style={[styles.challengeChip, styles.challengeChipMuted]}>
+                        <Text style={styles.challengeChipText}>High impact</Text>
+                      </View>
+                    </View>
+                    <View style={styles.challengeProgressRow}>
+                      <View style={styles.challengeProgressTrack}>
+                        <View
+                          style={[
+                            styles.challengeProgressFill,
+                            { width: c.type === 'community' ? '72%' : '48%' },
+                          ]}
+                        />
+                      </View>
+                      <Text style={styles.challengeProgressLabel}>{c.type === 'community' ? '72%' : '48%'}</Text>
+                    </View>
+                    <View style={styles.challengeCardFooter}>
+                      <Text style={styles.goalsCardMeta}>Momentum rising</Text>
+                      <TouchableOpacity onPress={() => setSelectedChallengeDetail(c)} style={styles.challengeQuickActionBtn}>
+                        <Text style={styles.challengeQuickActionText}>Open</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                 </View>
               ))}
+              <Modal
+                animationType="fade"
+                onRequestClose={() => setSelectedChallengeDetail(null)}
+                transparent
+                visible={selectedChallengeDetail != null}
+              >
+                <Pressable onPress={() => setSelectedChallengeDetail(null)} style={styles.challengeDetailBackdrop}>
+                  <Pressable onPress={() => {}} style={styles.challengeDetailModal}>
+                    {selectedChallengeDetail ? (
+                      <>
+                        <View style={styles.challengeDetailHeader}>
+                          <Text style={styles.challengeDetailTitle}>Challenge Details</Text>
+                          <TouchableOpacity onPress={() => setSelectedChallengeDetail(null)} style={styles.challengeDetailCloseBtn}>
+                            <Text style={styles.challengeDetailCloseText}>×</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <View style={styles.challengeDetailChips}>
+                          <Text
+                            style={[
+                              styles.challengeTypeBadge,
+                              selectedChallengeDetail.type === 'community' ? styles.challengeTypeCommunity : styles.challengeTypePersonal,
+                            ]}
+                          >
+                            {selectedChallengeDetail.type === 'community' ? 'Community Challenge' : 'Personal Challenge'}
+                          </Text>
+                          <Text style={styles.challengeMembersPill}>{selectedChallengeDetail.members}</Text>
+                        </View>
+                        <Text style={styles.challengeDetailName}>{selectedChallengeDetail.title}</Text>
+                        <Text style={styles.challengeDetailText}>{selectedChallengeDetail.detail}</Text>
+                        <View style={styles.challengeProgressRow}>
+                          <View style={styles.challengeProgressTrack}>
+                            <View
+                              style={[
+                                styles.challengeProgressFill,
+                                { width: selectedChallengeDetail.type === 'community' ? '72%' : '48%' },
+                              ]}
+                            />
+                          </View>
+                          <Text style={styles.challengeProgressLabel}>{selectedChallengeDetail.type === 'community' ? '72%' : '48%'}</Text>
+                        </View>
+                        <View style={styles.challengeDetailActions}>
+                          <TouchableOpacity onPress={() => setSelectedChallengeDetail(null)} style={styles.challengeDetailDismissBtn}>
+                            <Text style={styles.challengeDetailDismissText}>Close</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => setSelectedChallengeDetail(null)} style={styles.challengeDetailPrimaryBtn}>
+                            <Text style={styles.challengeDetailPrimaryText}>Mark Check-In</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </>
+                    ) : null}
+                  </Pressable>
+                </Pressable>
+              </Modal>
             </ScrollView>
           ) : null}
           {goalsTab === 'Communities' ? (

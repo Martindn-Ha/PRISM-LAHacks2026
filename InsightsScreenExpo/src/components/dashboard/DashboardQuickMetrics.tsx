@@ -3,10 +3,10 @@ import { Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, { runOnJS, type SharedValue, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import {
-  QUICK_ACTION_ICON_BY_TAB,
   QUICK_ACTION_THEME_COLOR_BY_TAB,
   type InsightTab,
 } from '../../constants/insights';
+import { InsightTabIcon } from '../icons/InsightTabIcon';
 import { styles } from '../../styles/appStyles';
 
 export function moveDashboardQuickMetric(list: InsightTab[], from: number, to: number): InsightTab[] {
@@ -129,7 +129,7 @@ function DashboardQuickActionSlot({
         style={[styles.quickItem, animatedStyle]}
       >
         <View style={[styles.quickIcon, { borderColor: QUICK_ACTION_THEME_COLOR_BY_TAB[metric] }]}>
-          <Text style={styles.quickIconGlyph}>{QUICK_ACTION_ICON_BY_TAB[metric]}</Text>
+          <InsightTabIcon color="#cbd5e1" metric={metric} size={24} />
         </View>
         <Text numberOfLines={1} style={styles.quickText}>
           {metric}
