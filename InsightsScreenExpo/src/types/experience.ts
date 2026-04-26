@@ -89,3 +89,14 @@ export type InviteContact = {
   name: string;
   phone: string | null;
 };
+
+/** Alert logs tab: one row per dashboard alert lifecycle event (threshold, recovery, dismiss, demo push). */
+export type AlertLogLevel = 'info' | 'warn' | 'error' | 'debug';
+
+export type AlertLogEvent = {
+  id: string;
+  at: string;
+  level: AlertLogLevel;
+  source: string;
+  message: string;
+};

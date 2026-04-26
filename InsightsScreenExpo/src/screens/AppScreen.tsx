@@ -79,13 +79,14 @@ import { generateAdvisorSuggestionBody, generateProgressPostMetadata, preloadZet
 import { Notifications } from '../lib/expoNotifications';
 import { getFirestoreInstance } from '../lib/firestoreClient';
 import { healthKit } from '../lib/appleHealthKit';
-import { formatEventSourceName, toErrorText, toShareSlug } from '../utils/format';
+import { buildProgressPostDisplayCaption, formatEventSourceName, toErrorText, toShareSlug } from '../utils/format';
 import GoalsScreen from './GoalsScreen';
 import InsightsScreen from './InsightsScreen';
 import MapScreen from './MapScreen';
 import LogsScreen from './LogsScreen';
 import ProfileShowcaseScreen from './ProfileShowcaseScreen';
 import type {
+  AlertLogEvent,
   CommunityEventItem,
   DashboardValueDriftToggles,
   InviteContact,
@@ -114,6 +115,12 @@ type AdvisorAlertSlideKey = 'glucose' | 'stress' | 'heartRate';
 type AdvisorSlide = {
   key: AdvisorAlertSlideKey | 'steady';
   message: string;
+};
+
+const ADVISOR_ALERT_LABEL: Record<AdvisorAlertSlideKey, string> = {
+  glucose: 'Glucose',
+  stress: 'Stress',
+  heartRate: 'Heart rate',
 };
 
 const SUGGESTION_CARD_BY_METRIC: Record<AdvisorAlertSlideKey, { badge: string; cta: string }> = {
@@ -263,6 +270,7 @@ export default function App() {
   const [demoScoreDriftEnabled, setDemoScoreDriftEnabled] = useState(false);
   const [demoFastDriftEnabled, setDemoFastDriftEnabled] = useState(false);
   const [demoAlertEnabled, setDemoAlertEnabled] = useState(false);
+  const [alertEventLog, setAlertEventLog] = useState<AlertLogEvent[]>([]);
   const [demoToolsDropdownOpen, setDemoToolsDropdownOpen] = useState(false);
   const [demoDashboardValueDrift, setDemoDashboardValueDrift] = useState<DashboardValueDriftToggles>({
     glucose: false,
@@ -466,6 +474,75 @@ export default function App() {
   ];
   const alertItems = demoAlertEnabled ? highAlertCandidates.filter(isDefined) : [];
   const alertCount = alertItems.length;
+
+  const appendAlertLog = useCallback((partial: Pick<AlertLogEvent, 'level' | 'source' | 'message'> & { id?: string }) => {
+    setAlertEventLog((prev) => {
+      const id = partial.id ?? `ae-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      const row: AlertLogEvent = {
+        id,
+        at: new Date().toISOString(),
+        level: partial.level,
+        source: partial.source,
+        message: partial.message,
+      };
+      return [row, ...prev].slice(0, 250);
+    });
+  }, []);
+
+  const prevGlucoseHighRef = useRef(false);
+  const prevStressHighRef = useRef(false);
+  const prevHeartRateHighRef = useRef(false);
+
+  useEffect(() => {
+    const gHigh = glucoseNow >= 170;
+    const sHigh = stressNow >= 70;
+    const hHigh = heartRateNow >= 95;
+
+    if (gHigh && !prevGlucoseHighRef.current) {
+      appendAlertLog({
+        level: 'warn',
+        source: 'alert:glucose',
+        message: `Abnormal Glucose: Glucose measured at ${glucoseNow} mg/dL (threshold ≥170).`,
+      });
+    } else if (!gHigh && prevGlucoseHighRef.current) {
+      appendAlertLog({
+        level: 'info',
+        source: 'alert:glucose',
+        message: `Glucose returned below high threshold (${glucoseNow} mg/dL).`,
+      });
+    }
+    prevGlucoseHighRef.current = gHigh;
+
+    if (sHigh && !prevStressHighRef.current) {
+      appendAlertLog({
+        level: 'warn',
+        source: 'alert:stress',
+        message: `Elevated Stress: Stress index at ${stressNow}/100 (threshold ≥70).`,
+      });
+    } else if (!sHigh && prevStressHighRef.current) {
+      appendAlertLog({
+        level: 'info',
+        source: 'alert:stress',
+        message: `Stress returned below high threshold (${stressNow}/100).`,
+      });
+    }
+    prevStressHighRef.current = sHigh;
+
+    if (hHigh && !prevHeartRateHighRef.current) {
+      appendAlertLog({
+        level: 'warn',
+        source: 'alert:heart-rate',
+        message: `Abnormal Heart Rate: Resting heart rate at ${heartRateNow} bpm (threshold ≥95).`,
+      });
+    } else if (!hHigh && prevHeartRateHighRef.current) {
+      appendAlertLog({
+        level: 'info',
+        source: 'alert:heart-rate',
+        message: `Heart rate returned below high threshold (${heartRateNow} bpm).`,
+      });
+    }
+    prevHeartRateHighRef.current = hHigh;
+  }, [appendAlertLog, glucoseNow, heartRateNow, stressNow]);
   const toggleDashboardValueDrift = (key: keyof DashboardValueDriftToggles) => {
     setDemoDashboardValueDrift((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -965,6 +1042,7 @@ export default function App() {
         aristaContext,
         imageHints,
       });
+      const postedCaption = buildProgressPostDisplayCaption(zeticResult.autoDescription, zeticResult.autoTags);
       const db = getFirestoreInstance();
       let firestoreWriteError: string | null = null;
       if (db) {
@@ -990,6 +1068,7 @@ export default function App() {
         });
           await updateDoc(docRef, {
             status: 'ready',
+            caption: postedCaption,
             autoDescription: zeticResult.autoDescription,
             autoTags: zeticResult.autoTags,
             eventContext: zeticResult.useEventContext ? (aristaContext?.event ?? null) : null,
@@ -1003,6 +1082,7 @@ export default function App() {
         }
       }
       updateCommunityPost(communityName, localPostId, {
+        caption: postedCaption,
         imageLabel: firestoreWriteError
           ? 'Uploaded photo (cloud only)'
           : 'Uploaded progress photo',
@@ -2007,19 +2087,37 @@ export default function App() {
           }
         }
         const pushAlerts = highAlertCandidates.filter(isDefined);
+        if (pushAlerts.length === 0) {
+          appendAlertLog({
+            level: 'info',
+            source: 'demo-alerts',
+            message: 'Demo alerts enabled: no active high alerts to schedule as local notifications.',
+          });
+        } else {
+          appendAlertLog({
+            level: 'info',
+            source: 'demo-alerts',
+            message: `Demo alerts enabled: scheduling ${pushAlerts.length} local notification(s).`,
+          });
+        }
         for (let i = 0; i < pushAlerts.length; i += 1) {
           const alert = pushAlerts[i];
-        await Notifications.scheduleNotificationAsync({
-          content: {
+          await Notifications.scheduleNotificationAsync({
+            content: {
               title: alert.title,
               body: alert.detail,
-            sound: 'default',
-          },
+              sound: 'default',
+            },
             trigger: {
               type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
               seconds: i + 1,
               repeats: false,
             },
+          });
+          appendAlertLog({
+            level: 'info',
+            source: 'demo-push',
+            message: `Scheduled push: ${alert.title} — ${alert.detail}`,
           });
         }
       } catch {
@@ -2027,7 +2125,7 @@ export default function App() {
       }
     }
     void sendAlertDemoNotifications();
-  }, [demoAlertEnabled, highAlertCandidates]);
+  }, [appendAlertLog, demoAlertEnabled, highAlertCandidates]);
 
   useEffect(() => {
     if (activeTab !== 'Map') {
@@ -2445,6 +2543,12 @@ export default function App() {
                                 </TouchableOpacity>
                                 <TouchableOpacity
                                   onPress={() => {
+                                    const k = slide.key as AdvisorAlertSlideKey;
+                                    appendAlertLog({
+                                      level: 'info',
+                                      source: `alert:${k}`,
+                                      message: `${ADVISOR_ALERT_LABEL[k]} alert dismissed (Not now).`,
+                                    });
                                     setDismissedAdvisorSlideKeys((prev) => ({ ...prev, [slide.key]: true }));
                                   }}
                                   style={styles.advisorGallerySecondaryBtn}
@@ -2656,10 +2760,10 @@ export default function App() {
             />
               </View>
         ) : null}
-        {activeTab === 'Health logs' ? (
+        {activeTab === 'Alert logs' ? (
           <View collapsable={false} style={[styles.tabStackLayer, { zIndex: 2 }]}>
-            <LogsScreen />
-              </View>
+            <LogsScreen events={alertEventLog} />
+          </View>
         ) : null}
             </View>
 

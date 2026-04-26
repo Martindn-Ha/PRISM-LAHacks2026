@@ -1,3 +1,16 @@
+/** Demo MBTI-style line under profile photo (showcase only). */
+export const PROFILE_DEMO_PERSONALITY = {
+  code: 'INFJ',
+  name: 'The Advocate',
+} as const;
+
+/**
+ * IPIP-NEO 120-item questionnaire (Big Five / NEO-adjacent).
+ * Opens in the system browser — not the licensed NEO-PI-3 product.
+ */
+export const NEO_STYLE_PERSONALITY_QUESTIONNAIRE_URL =
+  'https://www.personalitytest.net/ipip/ipipneo120.html';
+
 export type ProfileBadge = {
   id: string;
   name: string;

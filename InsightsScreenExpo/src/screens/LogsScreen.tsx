@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
 import { ScrollView, Text, View } from 'react-native';
-import { DUMMY_HEALTH_LOG_EVENTS, type HealthLogEvent } from '../data/dummyLogEvents';
+import type { AlertLogEvent } from '../types/experience';
 import { styles } from '../styles/appStyles';
 
-const LEVEL_COLOR: Record<HealthLogEvent['level'], string> = {
+const LEVEL_COLOR: Record<AlertLogEvent['level'], string> = {
   info: '#7dd3fc',
   warn: '#fcd34d',
   error: '#fca5a5',
@@ -28,17 +28,22 @@ function formatDisplayTime(iso: string): string {
   }
 }
 
-export default function LogsScreen() {
+type LogsScreenProps = {
+  events: AlertLogEvent[];
+};
+
+export default function LogsScreen({ events }: LogsScreenProps) {
   const rows = useMemo(
-    () => [...DUMMY_HEALTH_LOG_EVENTS].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
-    [],
+    () => [...events].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
+    [events],
   );
 
   return (
     <View style={styles.resourcesScreen}>
-      <Text style={styles.resourcesTitle}>Health logs</Text>
+      <Text style={styles.resourcesTitle}>Alert logs</Text>
       <Text style={styles.resourcesSubtitle}>
-        Demo wellness feed from <Text style={{ color: '#e2e8f0' }}>src/data/dummyLogEvents.ts</Text> — sample Apple Health–style events only.
+        Timeline of alert events from this session: high glucose, stress, or heart rate, recoveries, dismissals, and demo
+        push notifications.
       </Text>
 
       <ScrollView
@@ -48,6 +53,14 @@ export default function LogsScreen() {
         showsVerticalScrollIndicator={false}
         style={styles.resourcesScroll}
       >
+        {rows.length === 0 ? (
+          <View style={[styles.glassCard, styles.resourcesCard, styles.logEventCard]}>
+            <Text style={styles.resourcesCardBody}>
+              No alert events yet. When metrics cross the advisor thresholds (glucose ≥170, stress ≥70, heart rate ≥95),
+              or you use demo alerts / dismiss a card, entries will appear here.
+            </Text>
+          </View>
+        ) : null}
         {rows.map((e) => (
           <View key={e.id} style={[styles.glassCard, styles.resourcesCard, styles.logEventCard]}>
             <View style={styles.logEventHeader}>
