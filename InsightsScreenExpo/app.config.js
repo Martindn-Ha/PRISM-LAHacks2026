@@ -3,8 +3,8 @@ require('dotenv/config');
 module.exports = {
   expo: {
     plugins: ['./plugins/withStripIosPushEntitlement.js'],
-    name: 'InsightsScreenExpo',
-    slug: 'InsightsScreenExpo',
+    name: 'PRISM',
+    slug: 'prism',
     version: '1.0.0',
     orientation: 'portrait',
     icon: './assets/icon.png',
@@ -22,8 +22,9 @@ module.exports = {
         'com.apple.developer.healthkit': true,
       },
       infoPlist: {
-        NSHealthShareUsageDescription: 'This app reads your Apple Health data to show personalized insights.',
-        NSHealthUpdateUsageDescription: 'This app may write selected wellness updates to Apple Health.',
+        CFBundleDisplayName: 'PRISM',
+        NSHealthShareUsageDescription: 'PRISM reads your Apple Health data to show personalized insights.',
+        NSHealthUpdateUsageDescription: 'PRISM may write selected wellness updates to Apple Health.',
         ZeticModelName: 'changgeun/gemma-4-E2B-it',
         ZeticModelVersion: 1,
         ZeticPersonalKey: process.env.EXPO_PUBLIC_ZETIC_PERSONAL_KEY ?? '',

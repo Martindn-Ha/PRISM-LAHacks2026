@@ -76,6 +76,23 @@ export const INSIGHT_GROUPS = [
   },
 ] as const;
 
+export type InsightTrendWindow = '7d' | '30d' | 'ytd';
+
+export const INSIGHT_TREND_WINDOW_LABEL: Record<InsightTrendWindow, string> = {
+  '7d': '7 days',
+  '30d': '30 days',
+  ytd: 'Year to date',
+};
+
+/** Short labels for trend window chips and chart headers */
+export const INSIGHT_TREND_WINDOW_CHIP: Record<InsightTrendWindow, string> = {
+  '7d': '7D',
+  '30d': '30D',
+  ytd: 'YTD',
+};
+
+export const INSIGHT_TREND_WINDOW_ORDER: InsightTrendWindow[] = ['7d', '30d', 'ytd'];
+
 export type InsightContent = {
   title: string;
   summary: string;

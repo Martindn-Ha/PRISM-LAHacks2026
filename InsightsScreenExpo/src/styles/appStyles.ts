@@ -23,7 +23,8 @@ export const styles = StyleSheet.create({
   content: {
     paddingTop: 52,
     paddingHorizontal: 16,
-    paddingBottom: 90,
+    /** End padding only; tab stack already clears `bottomNav` via `tabStackLayer`. */
+    paddingBottom: 24,
     gap: 8,
     backgroundColor: '#111827',
   },
@@ -31,8 +32,89 @@ export const styles = StyleSheet.create({
     flex: 1,
     paddingTop: 60,
     paddingHorizontal: 16,
-    paddingBottom: 84,
+    paddingBottom: 20,
     backgroundColor: '#111827',
+  },
+  resourcesScreen: {
+    flex: 1,
+    paddingTop: 60,
+    paddingHorizontal: 16,
+    paddingBottom: 20,
+    backgroundColor: '#111827',
+  },
+  resourcesTitle: {
+    color: '#f8fafc',
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+  },
+  resourcesSubtitle: {
+    color: '#94a3b8',
+    fontSize: 12,
+    marginTop: 6,
+    marginBottom: 4,
+    fontWeight: '600',
+    lineHeight: 17,
+  },
+  resourcesScroll: {
+    flex: 1,
+    marginTop: 10,
+  },
+  resourcesScrollContent: {
+    paddingBottom: 20,
+    gap: 12,
+  },
+  resourcesCard: {
+    width: '100%',
+    alignSelf: 'stretch',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  resourcesTag: {
+    fontSize: 9,
+    letterSpacing: 0.85,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  resourcesCardTitle: {
+    color: '#f1f5f9',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+    marginBottom: 6,
+  },
+  resourcesCardBody: {
+    color: '#cbd5e1',
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500',
+  },
+  logEventCard: {
+    paddingVertical: 12,
+  },
+  logEventHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  logEventTime: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  logEventLevel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  logEventSource: {
+    color: '#94a3b8',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 6,
   },
   mapTitle: {
     color: '#f8fafc',
@@ -114,7 +196,7 @@ export const styles = StyleSheet.create({
     flex: 1,
     paddingTop: 54,
     paddingHorizontal: 16,
-    paddingBottom: 78,
+    paddingBottom: 16,
     backgroundColor: '#111827',
   },
   insightsTitle: {
@@ -138,6 +220,44 @@ export const styles = StyleSheet.create({
   },
   insightsHealthTaglineConnected: {
     color: '#86efac',
+  },
+  insightsTrendWindowRow: {
+    marginTop: 14,
+    marginBottom: 20,
+    width: '100%',
+  },
+  insightsTrendWindowLabel: {
+    color: '#94a3b8',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.9,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  insightsTrendWindowChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  insightsTrendWindowChip: {
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.45)',
+    backgroundColor: 'rgba(15,23,42,0.35)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  insightsTrendWindowChipActive: {
+    borderColor: 'rgba(56,189,248,0.65)',
+    backgroundColor: 'rgba(14,165,233,0.15)',
+  },
+  insightsTrendWindowChipText: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  insightsTrendWindowChipTextActive: {
+    color: '#e0f2fe',
   },
   insightsStarredGalleryWrap: {
     marginTop: 16,
@@ -214,6 +334,18 @@ export const styles = StyleSheet.create({
     marginTop: 8,
     fontWeight: '600',
   },
+  insightsLlmPrimaryBtn: {
+    marginTop: 8,
+  },
+  insightsLlmRegenerateWrap: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+  },
+  insightsLlmRegenerateText: {
+    color: '#93c5fd',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   quickMetricSearchInput: {
     borderWidth: 1,
     borderColor: 'rgba(148,163,184,0.35)',
@@ -275,12 +407,14 @@ export const styles = StyleSheet.create({
     color: '#eff6ff',
   },
   insightsTabStack: {
-    flex: 1,
     gap: 6,
   },
   insightsTabScroll: {
     marginTop: 8,
     marginBottom: 6,
+  },
+  insightsHubScroll: {
+    flex: 1,
   },
   insightsGroupCard: {
     borderWidth: 1,
@@ -437,21 +571,6 @@ export const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 8,
   },
-  insightsTrendPill: {
-    alignSelf: 'flex-start',
-    marginTop: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(34,197,94,0.35)',
-    backgroundColor: 'rgba(34,197,94,0.12)',
-  },
-  insightsCardTrend: {
-    color: '#bbf7d0',
-    fontSize: 12,
-    fontWeight: '800',
-  },
   insightsChartHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -465,6 +584,44 @@ export const styles = StyleSheet.create({
   insightsLineChartWrap: {
     marginTop: 10,
   },
+  insightsLineChartHScroll: {
+    flexGrow: 0,
+  },
+  insightsLineChartHScrollContent: {
+    flexGrow: 0,
+    paddingRight: 6,
+  },
+  insightsLineChartRangeLegend: {
+    color: '#94a3b8',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 8,
+    marginBottom: 2,
+    letterSpacing: 0.2,
+  },
+  insightsLineChartAxisStrip: {
+    position: 'relative',
+    height: 50,
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  insightsLineChartAxisTick: {
+    position: 'absolute',
+    top: 0,
+    width: 54,
+    alignItems: 'center',
+  },
+  insightsLineChartAxisValue: {
+    color: '#e2e8f0',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  insightsLineChartAxisDate: {
+    color: '#cbd5e1',
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 3,
+  },
   insightsLineLabelsRow: {
     marginTop: 2,
     flexDirection: 'row',
@@ -474,6 +631,15 @@ export const styles = StyleSheet.create({
   insightsLineLabelItem: {
     flex: 1,
     alignItems: 'center',
+  },
+  insightsLineLabelsRowDense: {
+    justifyContent: 'flex-start',
+    alignSelf: 'stretch',
+  },
+  insightsLineLabelItemDense: {
+    flex: 0,
+    flexGrow: 0,
+    flexShrink: 0,
   },
   insightsChartValue: {
     color: '#e2e8f0',
@@ -485,6 +651,15 @@ export const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     marginTop: 2,
+  },
+  insightsChartValueDense: {
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  insightsChartLabelDense: {
+    fontSize: 8,
+    fontWeight: '700',
+    marginTop: 1,
   },
   insightsPromptCard: {
     borderWidth: 1,
@@ -513,6 +688,31 @@ export const styles = StyleSheet.create({
   insightsDetailScrollContent: {
     paddingBottom: 18,
   },
+  insightsDetailOverview: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148,163,184,0.28)',
+    paddingTop: 16,
+    marginBottom: 8,
+  },
+  insightsDetailOverviewTitle: {
+    color: '#f8fafc',
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+    marginTop: 6,
+  },
+  insightsDetailOverviewSummary: {
+    color: '#cbd5e1',
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 8,
+  },
+  insightsDetailLlmSection: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148,163,184,0.28)',
+    paddingTop: 16,
+    marginTop: 4,
+  },
   insightsDetailHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -529,11 +729,6 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  insightsBackText: {
-    color: '#f8fafc',
-    fontSize: 15,
-    fontWeight: '800',
-  },
   insightsDetailHeaderText: {
     flex: 1,
   },
@@ -547,7 +742,7 @@ export const styles = StyleSheet.create({
     flex: 1,
     paddingTop: 60,
     paddingHorizontal: 16,
-    paddingBottom: 84,
+    paddingBottom: 20,
     backgroundColor: '#111827',
   },
   goalsTitle: {
@@ -599,6 +794,18 @@ export const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 12,
     backgroundColor: 'rgba(15,23,42,0.78)',
+  },
+  goalsCommunityCard: {
+    overflow: 'hidden',
+    padding: 0,
+  },
+  goalsCommunityCardImage: {
+    width: '100%',
+    height: 112,
+    backgroundColor: 'rgba(30,41,59,0.95)',
+  },
+  goalsCommunityCardBody: {
+    padding: 15,
   },
   challengeCommunityCard: {
     borderColor: 'rgba(59,130,246,0.42)',
@@ -1024,13 +1231,28 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.12)',
     backgroundColor: 'rgba(10,14,24,0.8)',
-    padding: 14,
-    minHeight: 194,
+    padding: 0,
+    overflow: 'hidden',
+    minHeight: 210,
+    flexDirection: 'column',
   },
-  communityCardBadge: {
-    color: '#f97316',
-    fontSize: 12,
-    marginBottom: 8,
+  communityCardImage: {
+    width: '100%',
+    height: 100,
+    backgroundColor: 'rgba(30,41,59,0.95)',
+  },
+  communityCardBody: {
+    flex: 1,
+    padding: 14,
+    flexDirection: 'column',
+  },
+  communityCardTextBlock: {
+    flexShrink: 0,
+  },
+  communityCardButtonSpacer: {
+    flexGrow: 1,
+    flexShrink: 0,
+    minHeight: 18,
   },
   communityCardTitle: {
     color: '#f8fafc',
@@ -1044,17 +1266,27 @@ export const styles = StyleSheet.create({
     marginTop: 4,
   },
   communityJoinBtn: {
-    marginTop: 'auto',
+    flexShrink: 0,
+    alignSelf: 'stretch',
     backgroundColor: '#7CB89B',
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 9,
   },
+  communityJoinBtnJoined: {
+    backgroundColor: 'transparent',
+    borderWidth: 1.5,
+    borderColor: 'rgba(148,163,184,0.55)',
+  },
   communityJoinText: {
     color: '#0f2a22',
     fontSize: 12,
     fontWeight: '800',
+  },
+  communityJoinTextJoined: {
+    color: '#94a3b8',
+    fontWeight: '700',
   },
   communityHero: {
     borderRadius: 18,
@@ -1099,6 +1331,35 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
+  },
+  communitySettingsMenuRoot: {
+    flex: 1,
+  },
+  communitySettingsMenuBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.32)',
+  },
+  communitySettingsMenu: {
+    position: 'absolute',
+    borderRadius: 12,
+    backgroundColor: 'rgba(15,23,42,0.97)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+    overflow: 'hidden',
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+  },
+  communitySettingsMenuRow: {
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  communitySettingsMenuRowText: {
+    color: '#fca5a5',
+    fontSize: 15,
+    fontWeight: '600',
   },
   communityDetailCard: {
     borderWidth: 1,
@@ -1588,12 +1849,6 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(15,23,42,0.7)',
   },
-  alertsBackText: {
-    color: '#f8fafc',
-    fontSize: 15,
-    lineHeight: 15,
-    fontWeight: '800',
-  },
   alertsHeaderTextWrap: {
     flex: 1,
   },
@@ -1646,6 +1901,152 @@ export const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     marginTop: 7,
+  },
+  profileShowcaseBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(2,6,23,0.78)',
+    paddingHorizontal: 14,
+    paddingTop: 52,
+    paddingBottom: 24,
+  },
+  profileShowcaseCard: {
+    flex: 1,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+    backgroundColor: '#0f172a',
+    overflow: 'hidden',
+  },
+  profileShowcaseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148,163,184,0.2)',
+  },
+  profileShowcaseBackBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
+    backgroundColor: 'rgba(15,23,42,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileShowcaseHeaderText: {
+    flex: 1,
+  },
+  profileShowcaseTitle: {
+    color: '#f8fafc',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  profileShowcaseSubtitle: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  profileShowcaseScroll: {
+    flex: 1,
+  },
+  profileAvatarWrap: {
+    alignItems: 'center',
+    paddingTop: 28,
+    paddingBottom: 8,
+  },
+  profileAvatarRing: {
+    width: 132,
+    height: 132,
+    borderRadius: 66,
+    borderWidth: 3,
+    borderColor: 'rgba(56,189,248,0.55)',
+    backgroundColor: 'rgba(15,23,42,0.9)',
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileAvatarImage: {
+    width: 124,
+    height: 124,
+    borderRadius: 62,
+  },
+  profileShowcaseDivider: {
+    height: 1,
+    marginHorizontal: 20,
+    marginTop: 20,
+    marginBottom: 18,
+    backgroundColor: 'rgba(148,163,184,0.35)',
+  },
+  profileBadgesSectionLabel: {
+    color: '#e2e8f0',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    paddingHorizontal: 20,
+  },
+  profileBadgesSectionHint: {
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 6,
+    marginBottom: 16,
+    paddingHorizontal: 20,
+    lineHeight: 17,
+  },
+  profileBadgesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 12,
+    rowGap: 18,
+    columnGap: 8,
+    paddingBottom: 28,
+    justifyContent: 'space-between',
+  },
+  profileBadgeCell: {
+    width: '31%',
+    alignItems: 'center',
+    paddingHorizontal: 2,
+  },
+  profileBadgeCircle: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    borderWidth: 2,
+    borderColor: 'rgba(56,189,248,0.55)',
+    backgroundColor: 'rgba(14,165,233,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileBadgeCircleLocked: {
+    borderColor: 'rgba(71,85,105,0.65)',
+    backgroundColor: 'rgba(30,41,59,0.55)',
+    opacity: 0.85,
+  },
+  profileBadgeGlyph: {
+    fontSize: 30,
+    textAlign: 'center',
+    includeFontPadding: false,
+  },
+  profileBadgeGlyphLocked: {
+    opacity: 0.4,
+  },
+  profileBadgeName: {
+    color: '#e2e8f0',
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 14,
+    marginTop: 10,
+    width: '100%',
+  },
+  profileBadgeNameLocked: {
+    color: '#64748b',
   },
   weatherText: {
     color: '#fff',
@@ -1837,6 +2238,26 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 8,
   },
+  foodCardBodyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    alignSelf: 'stretch',
+  },
+  foodCardBodyText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  foodCardGeneratingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    alignSelf: 'stretch',
+  },
+  foodCardGeneratingLabel: {
+    flex: 1,
+    minWidth: 0,
+  },
   foodToggleBtn: {
     borderColor: 'rgba(202,138,4,0.4)',
     borderWidth: 1,
@@ -1993,13 +2414,12 @@ export const styles = StyleSheet.create({
     fontSize: 11,
   },
   foodBtn: {
-    alignSelf: 'flex-start',
+    flexShrink: 0,
     borderColor: 'rgba(202,138,4,0.5)',
     borderWidth: 1,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 8,
-    marginTop: 2,
   },
   foodBtnText: {
     color: '#EAB308',
@@ -2118,22 +2538,31 @@ export const styles = StyleSheet.create({
     height: 6,
     backgroundColor: 'transparent',
   },
+  /** Must match `bottomNav.height` so tab layers do not cover the nav (touch + paint order). */
+  tabStackLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 72,
+  },
   bottomNav: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
     height: 72,
+    zIndex: 50,
+    elevation: 50,
     backgroundColor: '#111827',
     flexDirection: 'row',
     justifyContent: 'flex-start',
     alignItems: 'center',
-    paddingLeft: 8,
-    paddingRight: 24,
+    paddingLeft: 16,
+    paddingRight: 18,
     shadowOpacity: 0,
     shadowRadius: 0,
     shadowOffset: { width: 0, height: 0 },
-    elevation: 0,
   },
   navDividerSvg: {
     position: 'absolute',
@@ -2196,6 +2625,8 @@ export const styles = StyleSheet.create({
   sidebarOverlay: {
     position: 'absolute',
     inset: 0,
+    zIndex: 200,
+    elevation: 200,
     flexDirection: 'row',
   },
   sidebarScrim: {

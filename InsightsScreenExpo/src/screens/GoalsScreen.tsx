@@ -1,7 +1,9 @@
 // @ts-nocheck
-import { useState } from 'react';
-import { Image, Modal, Pressable, ScrollView, Share, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useEffect, useRef, useState } from 'react';
+import { Dimensions, Image, Modal, Pressable, ScrollView, Share, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { CHALLENGE_FILTERS, GOALS_TABS } from '../constants/appNavigation';
+import { APP_DISPLAY_NAME } from '../constants/appBranding';
 import { COMMUNITY_ACTIONS, COMMUNITY_OVERVIEW_DESCRIPTION } from '../constants/community';
 import { COMMUNITY_SPOTLIGHT_IMAGE_URL } from '../config/publicEnv';
 import { formatEventSourceName } from '../utils/format';
@@ -10,8 +12,15 @@ import { styles } from '../styles/appStyles';
 
 type Props = any;
 
+const COMMUNITY_SETTINGS_MENU_W = 216;
+const COMMUNITY_SETTINGS_MENU_H = 50;
+
 export default function GoalsScreen(props: Props) {
   const [selectedChallengeDetail, setSelectedChallengeDetail] = useState<any | null>(null);
+  const [communitySettingsMenu, setCommunitySettingsMenu] = useState<{ visible: boolean; anchor: { x: number; y: number; w: number; h: number } | null }>(
+    { visible: false, anchor: null },
+  );
+  const communityHeroSettingsRef = useRef(null);
   const {
     goalsTab, setGoalsTab, isInteractingWithEventsList, selectedJoinedCommunity, setSelectedJoinedCommunityName,
     showOverviewPopup, setShowOverviewPopup, selectedCommunityAction, setSelectedCommunityAction, openInviteContacts,
@@ -21,6 +30,54 @@ export default function GoalsScreen(props: Props) {
     setShowCreatePersonalChallengeModal, filteredChallenges, communitySearchQuery, setCommunitySearchQuery, filteredCommunities,
     joinedCommunityNames, setJoinedCommunityNames,
   } = props;
+  const closeCommunitySettingsMenu = () => {
+    setCommunitySettingsMenu({ visible: false, anchor: null });
+  };
+  const toggleCommunitySettingsMenu = () => {
+    if (communitySettingsMenu.visible) {
+      closeCommunitySettingsMenu();
+      return;
+    }
+    communityHeroSettingsRef.current?.measureInWindow((x, y, w, h) => {
+      setCommunitySettingsMenu({ visible: true, anchor: { x, y, w, h } });
+    });
+  };
+  const leaveCurrentCommunity = () => {
+    if (!selectedJoinedCommunity) {
+      return;
+    }
+    const name = selectedJoinedCommunity.name;
+    setJoinedCommunityNames((prev: string[]) => prev.filter((n) => n !== name));
+    setSelectedJoinedCommunityName(null);
+    setShowOverviewPopup(false);
+    setShowInvitePopup(false);
+    setSelectedCommunityAction('Progress Board');
+    closeCommunitySettingsMenu();
+  };
+  const communitySettingsMenuPosition = () => {
+    const a = communitySettingsMenu.anchor;
+    if (!a) {
+      return { top: 0, left: 0 };
+    }
+    const { width: sw, height: sh } = Dimensions.get('window');
+    const margin = 12;
+    let left = a.x + a.w - COMMUNITY_SETTINGS_MENU_W;
+    left = Math.max(margin, Math.min(left, sw - COMMUNITY_SETTINGS_MENU_W - margin));
+    let top = a.y + a.h + 6;
+    if (top + COMMUNITY_SETTINGS_MENU_H > sh - margin) {
+      top = a.y - COMMUNITY_SETTINGS_MENU_H - 6;
+    }
+    top = Math.max(margin, top);
+    return { top, left };
+  };
+  const communityHeroImageUri = selectedJoinedCommunity
+    ? COMMUNITY_SPOTLIGHT_IMAGE_URL?.trim() || selectedJoinedCommunity.coverUrl
+    : '';
+  useEffect(() => {
+    if (!selectedJoinedCommunity) {
+      setCommunitySettingsMenu({ visible: false, anchor: null });
+    }
+  }, [selectedJoinedCommunity]);
   return (
         <View style={styles.goalsScreen}>
           <Text style={styles.goalsTitle}>Goals</Text>
@@ -47,17 +104,22 @@ export default function GoalsScreen(props: Props) {
               {selectedJoinedCommunity ? (
                 <View>
                   <View style={styles.communityHero}>
-                    {COMMUNITY_SPOTLIGHT_IMAGE_URL ? (
+                    {communityHeroImageUri ? (
                       <>
-                        <Image source={{ uri: COMMUNITY_SPOTLIGHT_IMAGE_URL }} style={styles.communityHeroImage} resizeMode="cover" />
+                        <Image source={{ uri: communityHeroImageUri }} style={styles.communityHeroImage} resizeMode="cover" />
                         <View style={styles.communityHeroScrim} />
                       </>
                     ) : null}
                     <View style={styles.communityHeroActions}>
                       <TouchableOpacity onPress={() => setSelectedJoinedCommunityName(null)} style={styles.communityHeroIconBtn}>
-                        <Text style={styles.communityHeroIconText}>{'<'}</Text>
+                        <Ionicons name="chevron-back" size={22} color="#f8fafc" />
                       </TouchableOpacity>
-                      <TouchableOpacity style={styles.communityHeroIconBtn}>
+                      <TouchableOpacity
+                        ref={communityHeroSettingsRef}
+                        collapsable={false}
+                        onPress={toggleCommunitySettingsMenu}
+                        style={styles.communityHeroIconBtn}
+                      >
                         <Text style={styles.communityHeroIconText}>⚙</Text>
                       </TouchableOpacity>
                     </View>
@@ -85,7 +147,7 @@ export default function GoalsScreen(props: Props) {
                               }
                               if (action.label === 'Share' && selectedJoinedCommunity && selectedCommunityShareLink) {
                                 void Share.share({
-                                  message: `Join me in ${selectedJoinedCommunity.name} on Connected Wellness: ${selectedCommunityShareLink}`,
+                                  message: `Join me in ${selectedJoinedCommunity.name} on ${APP_DISPLAY_NAME}: ${selectedCommunityShareLink}`,
                                   url: selectedCommunityShareLink,
                                   title: `Share ${selectedJoinedCommunity.name}`,
                                 });
@@ -161,6 +223,36 @@ export default function GoalsScreen(props: Props) {
                         )}
                       </Pressable>
                     </Pressable>
+                  </Modal>
+                  <Modal
+                    animationType="fade"
+                    onRequestClose={closeCommunitySettingsMenu}
+                    transparent
+                    visible={communitySettingsMenu.visible}
+                  >
+                    <View style={styles.communitySettingsMenuRoot}>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={closeCommunitySettingsMenu}
+                        style={styles.communitySettingsMenuBackdrop}
+                      />
+                      {communitySettingsMenu.anchor ? (
+                        <View
+                          style={[
+                            styles.communitySettingsMenu,
+                            { width: COMMUNITY_SETTINGS_MENU_W, ...communitySettingsMenuPosition() },
+                          ]}
+                        >
+                          <TouchableOpacity
+                            accessibilityRole="button"
+                            onPress={leaveCurrentCommunity}
+                            style={styles.communitySettingsMenuRow}
+                          >
+                            <Text style={styles.communitySettingsMenuRowText}>Leave community</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+                    </View>
                   </Modal>
                   {selectedCommunityAction === 'Events' ? (
                     <View>
@@ -265,10 +357,17 @@ export default function GoalsScreen(props: Props) {
                 </View>
               ) : (
                 joinedCommunities.map((community) => (
-                  <TouchableOpacity key={community.name} onPress={() => setSelectedJoinedCommunityName(community.name)} style={styles.goalsCard}>
-                    <Text style={styles.goalsCardTitle}>{community.name}</Text>
-                    <Text style={styles.goalsCardDetail}>{community.city}</Text>
-                    <Text style={styles.goalsCardMeta}>{`Joined • ${community.members}`}</Text>
+                  <TouchableOpacity
+                    key={community.name}
+                    onPress={() => setSelectedJoinedCommunityName(community.name)}
+                    style={[styles.goalsCard, styles.goalsCommunityCard]}
+                  >
+                    <Image source={{ uri: community.coverUrl }} style={styles.goalsCommunityCardImage} resizeMode="cover" />
+                    <View style={styles.goalsCommunityCardBody}>
+                      <Text style={styles.goalsCardTitle}>{community.name}</Text>
+                      <Text style={styles.goalsCardDetail}>{community.city}</Text>
+                      <Text style={styles.goalsCardMeta}>{`Joined • ${community.members}`}</Text>
+                    </View>
                   </TouchableOpacity>
                 ))
               )}
@@ -424,26 +523,35 @@ export default function GoalsScreen(props: Props) {
               </View>
               <Text style={styles.communitySectionTitle}>Popular communities near you</Text>
               <View style={styles.communityGrid}>
-                {filteredCommunities.map((community) => (
-                  <View key={community.name} style={styles.communityCard}>
-                    <Text style={styles.communityCardBadge}>●</Text>
-                    <Text style={styles.communityCardTitle}>{community.name}</Text>
-                    <Text style={styles.communityCardMeta}>{community.city}</Text>
-                    <Text style={styles.communityCardMeta}>{community.members}</Text>
-                    <TouchableOpacity
-                      onPress={() =>
-                        setJoinedCommunityNames((prev: string[]) =>
-                          prev.includes(community.name) ? prev : [...prev, community.name],
-                        )
-                      }
-                      style={styles.communityJoinBtn}
-                    >
-                      <Text style={styles.communityJoinText}>
-                        {joinedCommunityNames.includes(community.name) ? 'Joined' : 'Join'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
+                {filteredCommunities.map((community) => {
+                  const isJoined = joinedCommunityNames.includes(community.name);
+                  return (
+                    <View key={community.name} style={styles.communityCard}>
+                      <Image source={{ uri: community.coverUrl }} style={styles.communityCardImage} resizeMode="cover" />
+                      <View style={styles.communityCardBody}>
+                        <View style={styles.communityCardTextBlock}>
+                          <Text style={styles.communityCardTitle}>{community.name}</Text>
+                          <Text style={styles.communityCardMeta}>{community.city}</Text>
+                          <Text style={styles.communityCardMeta}>{community.members}</Text>
+                        </View>
+                        <View style={styles.communityCardButtonSpacer} />
+                        <TouchableOpacity
+                          disabled={isJoined}
+                          onPress={() =>
+                            setJoinedCommunityNames((prev: string[]) =>
+                              prev.includes(community.name) ? prev : [...prev, community.name],
+                            )
+                          }
+                          style={[styles.communityJoinBtn, isJoined && styles.communityJoinBtnJoined]}
+                        >
+                          <Text style={[styles.communityJoinText, isJoined && styles.communityJoinTextJoined]}>
+                            {isJoined ? 'Joined' : 'Join'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })}
                 {filteredCommunities.length === 0 ? (
                   <View style={styles.goalsCard}>
                     <Text style={styles.goalsCardTitle}>No communities found</Text>

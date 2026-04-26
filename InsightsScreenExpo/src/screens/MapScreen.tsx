@@ -1,4 +1,5 @@
 // @ts-nocheck
+import React, { useMemo } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import { MAP_LAYERS, type MapLayerFilter } from '../constants/appNavigation';
@@ -19,6 +20,18 @@ type Props = {
 
 export default function MapScreen(props: Props) {
   const { activeMapLayer, setActiveMapLayer, mapLocationStatus, mapCoords, mapDiscoveryEventsLoading, mapViewRef, mapRecommendations, openEventLinkPrompt, recenterMapToCurrentLocation } = props;
+  const mapRegion = useMemo(
+    () =>
+      mapCoords
+        ? {
+            latitude: mapCoords.lat,
+            longitude: mapCoords.lon,
+            latitudeDelta: 0.012,
+            longitudeDelta: 0.012,
+          }
+        : null,
+    [mapCoords?.lat, mapCoords?.lon],
+  );
   return (
         <View style={styles.mapScreen}>
           <Text style={styles.mapTitle}>Map</Text>
@@ -43,27 +56,28 @@ export default function MapScreen(props: Props) {
           {mapCoords && mapDiscoveryEventsLoading ? (
             <Text style={styles.mapSubtitle}>Loading Ticketmaster & Eventbrite listings…</Text>
           ) : null}
-          {mapCoords ? (
+          {mapCoords && mapRegion ? (
             <View style={styles.mapContainer}>
               <MapView
                 ref={mapViewRef}
-                region={{
-                  latitude: mapCoords.lat,
-                  longitude: mapCoords.lon,
-                  latitudeDelta: 0.012,
-                  longitudeDelta: 0.012,
-                }}
+                region={mapRegion}
                 showsUserLocation
                 style={styles.map}
               >
-                <Marker coordinate={{ latitude: mapCoords.lat, longitude: mapCoords.lon }} title="You are here" />
+                <Marker
+                  coordinate={{ latitude: mapCoords.lat, longitude: mapCoords.lon }}
+                  title="You are here"
+                  description=" "
+                  tracksViewChanges={false}
+                />
                 {mapRecommendations.map((item) => (
                   <Marker
                     key={item.id}
                     coordinate={{ latitude: item.latitude, longitude: item.longitude }}
                     pinColor={item.pinColor ?? '#22c55e'}
-                    title={item.title}
-                    description={item.subtitle}
+                    title={item.title ?? 'Event'}
+                    description={item.subtitle ?? ' '}
+                    tracksViewChanges={false}
                     onPress={() => {
                       if (item.linkedEvent) {
                         openEventLinkPrompt(item.linkedEvent);
