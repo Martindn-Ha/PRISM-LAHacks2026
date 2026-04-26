@@ -491,17 +491,6 @@ exports.nearbyEventContext = functions
     const eventStart = nowIso;
     const eventEnd = new Date(new Date(nowIso).getTime() + 2 * 60 * 60 * 1000).toISOString();
 
-    const eventScore = scoreCandidate(
-      {
-        distanceMeters: 180,
-        startsAt: eventStart,
-        endsAt: eventEnd,
-        type: 'community-event',
-        source: 'curated',
-      },
-      { nowIso, desiredType },
-    );
-
     const rawResources = [
       {
         type: 'hydration',
@@ -528,7 +517,7 @@ exports.nearbyEventContext = functions
         source: 'curated',
       },
     ];
-    const scoredResources = rawResources
+    const scoredResourcesWithMeta = rawResources
       .map((resource) => {
         const score = scoreCandidate(resource, { nowIso, desiredType });
         const lahacksBoost = isLahacksCommunity && resource.name === 'Pauley Pavilion' ? 0.15 : 0;
@@ -545,20 +534,29 @@ exports.nearbyEventContext = functions
           },
         };
       })
-      .sort((a, b) => b.confidence - a.confidence)
-      .map(({ startsAt, endsAt, source, ...rest }) => rest);
-    const topEventConfidence = Number(eventScore.finalScore.toFixed(2));
+      .sort((a, b) => b.confidence - a.confidence);
+
+    const topCommunityEvent = scoredResourcesWithMeta.find((resource) => resource.type === 'community-event') ?? null;
+    const topAnyResource = scoredResourcesWithMeta[0] ?? null;
+    const selectedEventResource = topCommunityEvent ?? topAnyResource;
+    const topEventConfidence = selectedEventResource?.confidence ?? 0;
     const eventDetected = topEventConfidence >= 0.65;
+    const eventName = selectedEventResource?.name ?? 'Nearby Wellness Event';
+    const eventVenue = selectedEventResource?.name ?? 'Campus Center';
+    const eventUrl = isLahacksCommunity ? 'https://www.lahacks.com' : null;
+
+    const scoredResources = scoredResourcesWithMeta
+      .map(({ startsAt, endsAt, source, ...rest }) => rest);
 
     return sendJson(res, 200, {
       eventDetected,
       event: {
-        name: 'Nearby Wellness Event',
-        venue: 'Campus Center',
+        name: eventName,
+        venue: eventVenue,
         startTime: eventStart,
         endTime: eventEnd,
         confidence: topEventConfidence,
-        sourceUrl: 'https://www.lahacks.com',
+        sourceUrl: eventUrl,
       },
       resources: scoredResources,
       sourceMeta: {

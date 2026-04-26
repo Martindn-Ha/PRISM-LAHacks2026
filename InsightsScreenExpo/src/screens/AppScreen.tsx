@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -15,20 +16,23 @@ import {
   Pressable,
   ScrollView,
   Share,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   useWindowDimensions,
   View,
 } from 'react-native';
-import Svg, { Circle, Defs, LinearGradient, Path, Stop, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop, Text as SvgText } from 'react-native-svg';
 import * as Location from 'expo-location';
 import * as Contacts from 'expo-contacts';
 import * as ImagePicker from 'expo-image-picker';
 import MapView, { Marker } from 'react-native-maps';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { getNextDemoScore, getScorePresentation } from '../services/scoringService';
+import { addDoc, collection, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { getScorePresentation } from '../services/scoringService';
+import WeatherIcon from '../components/WeatherIcon';
 import { fetchCurrentWeather } from '../services/weatherService';
+import { APP_DISPLAY_NAME } from '../constants/appBranding';
 import { styles } from '../styles/appStyles';
 import {
   ACTIVITY,
@@ -63,6 +67,7 @@ import {
   QUICK_ACTION_THEME_COLOR_BY_TAB,
   type InsightContent,
   type InsightTab,
+  type InsightTrendWindow,
 } from '../constants/insights';
 import { ARISTA_COMMUNITY_EVENTS_URL, COMMUNITY_SPOTLIGHT_IMAGE_URL, hasFirebaseConfig } from '../config/publicEnv';
 import { DashboardQuickActionMetricsRow } from '../components/dashboard/DashboardQuickMetrics';
@@ -70,20 +75,183 @@ import { InsightsFavoriteSparkPage } from '../components/insights/InsightsFavori
 import { ActivityMiniIcon, InsightsBulbIcon } from '../components/icons/WellnessIcons';
 import { fetchAristaCommunityEvents, fetchAristaContext } from '../lib/aristaClient';
 import { buildCloudinaryImageVariants, uploadImageToCloudinary } from '../lib/cloudinaryUpload';
+import { generateAdvisorSuggestionBody, generateProgressPostMetadata, preloadZeticModel } from '../lib/zeticClient';
 import { Notifications } from '../lib/expoNotifications';
 import { getFirestoreInstance } from '../lib/firestoreClient';
 import { healthKit } from '../lib/appleHealthKit';
-import { formatEventSourceName, toErrorText, toShareSlug } from '../utils/format';
+import { buildProgressPostDisplayCaption, formatEventSourceName, toErrorText, toShareSlug } from '../utils/format';
 import GoalsScreen from './GoalsScreen';
 import InsightsScreen from './InsightsScreen';
 import MapScreen from './MapScreen';
+import LogsScreen from './LogsScreen';
+import ProfileShowcaseScreen from './ProfileShowcaseScreen';
 import type {
+  AlertLogEvent,
   CommunityEventItem,
   DashboardValueDriftToggles,
   InviteContact,
   MapScreenPin,
   ProgressBoardPost,
 } from '../types/experience';
+
+type DemoDriftModel = {
+  phase: number;
+  stressBias: number;
+  glucoseBias: number;
+  recoveryBias: number;
+  hydrationBias: number;
+  adherenceBias: number;
+};
+
+type DemoHighAlert = {
+  id: string;
+  title: string;
+  detail: string;
+  severity: 'High';
+};
+
+type AdvisorAlertSlideKey = 'glucose' | 'stress' | 'heartRate';
+
+type AdvisorSlide = {
+  key: AdvisorAlertSlideKey | 'steady';
+  message: string;
+};
+
+const ADVISOR_ALERT_LABEL: Record<AdvisorAlertSlideKey, string> = {
+  glucose: 'Glucose',
+  stress: 'Stress',
+  heartRate: 'Heart rate',
+};
+
+const SUGGESTION_CARD_BY_METRIC: Record<AdvisorAlertSlideKey, { badge: string; cta: string }> = {
+  stress: {
+    badge: 'STRESS MANAGEMENT',
+    cta: 'View More',
+  },
+  glucose: {
+    badge: 'HEALTHIER FOODS',
+    cta: 'View More',
+  },
+  heartRate: {
+    badge: 'BREATHING EXERCISES',
+    cta: 'View More',
+  },
+};
+
+/** Where “View More” sends the user (Insights detail for that signal). */
+const ADVISOR_VIEW_OPTIONS_INSIGHT_TAB: Record<AdvisorAlertSlideKey, InsightTab> = {
+  stress: 'Mindfulness',
+  glucose: 'Blood Glucose',
+  heartRate: 'Respiratory Rate',
+};
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const normalize = (value: number, min: number, max: number) => clamp((value - min) / (max - min), 0, 1);
+const isDefined = <T,>(value: T | null | undefined): value is T => value != null;
+
+function buildInitialDriftModel(args: {
+  stressValue: number;
+  glucoseValue: number;
+  activitySleepMinutes: number;
+  activityWaterGlasses: number;
+  activityMedsTaken: number;
+}): DemoDriftModel {
+  return {
+    phase: 0,
+    stressBias: normalize(args.stressValue, 0, 100) - 0.5,
+    glucoseBias: normalize(args.glucoseValue, 70, 240) - 0.5,
+    recoveryBias: normalize(args.activitySleepMinutes, 180, 9 * 60 + 59) - 0.5,
+    hydrationBias: normalize(args.activityWaterGlasses, 0, 12) - 0.5,
+    adherenceBias: normalize(args.activityMedsTaken, 0, 2) - 0.5,
+  };
+}
+
+function getNextDriftSnapshot(model: DemoDriftModel, fastMode: boolean) {
+  const phaseStep = fastMode ? 0.34 : 0.16;
+  model.phase += phaseStep;
+  const dayRhythm = Math.sin(model.phase * 0.5);
+  const stressWave = Math.sin(model.phase * 1.1 + 0.8);
+  const glucoseWave = Math.sin(model.phase * 0.85 - 0.35);
+  const activityWave = Math.sin(model.phase * 1.45 + 0.25);
+
+  const stressNorm = clamp(0.5 + model.stressBias * 0.5 + stressWave * 0.22 - dayRhythm * 0.08, 0.08, 0.97);
+  const hydrationNorm = clamp(0.58 + model.hydrationBias * 0.55 - stressNorm * 0.14 + dayRhythm * 0.2, 0.05, 0.98);
+  const recoveryNorm = clamp(
+    0.52 + model.recoveryBias * 0.5 + dayRhythm * 0.22 - stressNorm * 0.22 + hydrationNorm * 0.1,
+    0.06,
+    0.98,
+  );
+  const adherenceNorm = clamp(0.6 + model.adherenceBias * 0.5 - stressNorm * 0.12 + recoveryNorm * 0.08, 0.1, 0.96);
+  const metabolicLoad = clamp(
+    stressNorm * 0.42 +
+      (1 - recoveryNorm) * 0.3 +
+      (1 - hydrationNorm) * 0.16 +
+      (1 - adherenceNorm) * 0.12,
+    0,
+    1,
+  );
+  const glucoseBase = 0.42 + model.glucoseBias * 0.5 + glucoseWave * 0.17 + stressNorm * 0.2 - hydrationNorm * 0.12 - adherenceNorm * 0.1;
+  const glucoseFloor = clamp((metabolicLoad - 0.45) * 1.25, 0, 0.62);
+  const glucoseNorm = clamp(Math.max(glucoseBase, glucoseFloor), 0.05, 0.99);
+
+  const cardiacLoad = clamp(stressNorm * 0.54 + metabolicLoad * 0.28 + activityWave * 0.08 - recoveryNorm * 0.08, 0, 1);
+  const hrBase = 0.31 + stressNorm * 0.4 + activityWave * 0.12 - recoveryNorm * 0.14;
+  const hrFloor = clamp((cardiacLoad - 0.4) * 1.15, 0, 0.6);
+  const hrNorm = clamp(Math.max(hrBase, hrFloor), 0.06, 0.98);
+
+  let glucose = clamp(Math.round(82 + glucoseNorm * 120), 70, 240);
+  const stress = clamp(Math.round(stressNorm * 100), 0, 100);
+  let heartRate = clamp(Math.round(52 + hrNorm * 56), 45, 130);
+  const sleepMinutes = clamp(Math.round(320 + recoveryNorm * 235), 180, 9 * 60 + 59);
+
+  // Progressively rise through the "day", with occasional faster windows from activity.
+  const stepDelta = clamp(Math.round(45 + (0.25 + activityWave * 0.35 + dayRhythm * 0.45) * 230), 15, 320);
+  const water = clamp(Math.round(hydrationNorm * 12), 0, 12);
+  const meds = adherenceNorm >= 0.72 ? 2 : adherenceNorm >= 0.4 ? 1 : 0;
+
+  const score = clamp(
+    Math.round(
+      100 -
+        (glucoseNorm * 26 +
+          stressNorm * 26 +
+          hrNorm * 20 +
+          (1 - recoveryNorm) * 14 +
+          (1 - hydrationNorm) * 6 +
+          (1 - adherenceNorm) * 4 +
+          metabolicLoad * 8),
+    ),
+    38,
+    92,
+  );
+
+  // Keep score and card vitals consistent for demos:
+  // when score is very low, glucose and heart rate should visibly trend high.
+  if (score <= 50) {
+    const severity = normalize(50 - score, 0, 12); // 50 -> 0, 38 -> 1
+    const glucoseFloor = Math.round(170 + severity * 20); // 170..190
+    const hrFloor = Math.round(95 + severity * 13); // 95..108
+    glucose = Math.max(glucose, glucoseFloor);
+    heartRate = Math.max(heartRate, hrFloor);
+  } else if (score <= 60) {
+    const severity = normalize(60 - score, 0, 10); // 60 -> 0, 50 -> 1
+    const glucoseFloor = Math.round(150 + severity * 20); // 150..170
+    const hrFloor = Math.round(88 + severity * 7); // 88..95
+    glucose = Math.max(glucose, glucoseFloor);
+    heartRate = Math.max(heartRate, hrFloor);
+  }
+
+  return {
+    score,
+    glucose,
+    stress,
+    heartRate,
+    sleepMinutes,
+    stepDelta,
+    water,
+    meds,
+  };
+}
 
 export default function App() {
   const { width: windowWidth } = useWindowDimensions();
@@ -94,12 +262,15 @@ export default function App() {
   const starredGallerySuppressAutoUntilRef = useRef(0);
   /** When true, skip programmatic gallery scrollTo so user-driven scroll can update dots without fighting layout. */
   const suppressStarredGalleryLayoutScrollRef = useRef(false);
+  /** When false, ignore onScroll-driven index updates (avoids fighting auto-rotate during programmatic scrollTo). */
+  const starredGalleryUserDraggingRef = useRef(false);
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [healthScore, setHealthScore] = useState(72);
   const [demoScoreDriftEnabled, setDemoScoreDriftEnabled] = useState(false);
   const [demoFastDriftEnabled, setDemoFastDriftEnabled] = useState(false);
   const [demoAlertEnabled, setDemoAlertEnabled] = useState(false);
+  const [alertEventLog, setAlertEventLog] = useState<AlertLogEvent[]>([]);
   const [demoToolsDropdownOpen, setDemoToolsDropdownOpen] = useState(false);
   const [demoDashboardValueDrift, setDemoDashboardValueDrift] = useState<DashboardValueDriftToggles>({
     glucose: false,
@@ -117,6 +288,12 @@ export default function App() {
   const [activitySleepMinutes, setActivitySleepMinutes] = useState(435);
   const [activityMedsTaken, setActivityMedsTaken] = useState(2);
   const [activityWaterGlasses, setActivityWaterGlasses] = useState(6);
+  const [advisorGallerySlideWidth, setAdvisorGallerySlideWidth] = useState(() => Math.max(200, windowWidth - 32 - 26 - 88 - 10));
+  const [advisorGalleryIndex, setAdvisorGalleryIndex] = useState(0);
+  const [advisorGalleryShellLayout, setAdvisorGalleryShellLayout] = useState({ w: 0, h: 0 });
+  const [advisorGalleryScrollX, setAdvisorGalleryScrollX] = useState(0);
+  const advisorGalleryEdgeGid = useMemo(() => `ag-${Math.random().toString(36).slice(2, 10)}`, []);
+  const [dismissedAdvisorSlideKeys, setDismissedAdvisorSlideKeys] = useState<Partial<Record<AdvisorAlertSlideKey, true>>>({});
   const [useDeviceLocation, setUseDeviceLocation] = useState(false);
   const [locationStatus, setLocationStatus] = useState<'off' | 'granted' | 'denied'>('off');
   const [locationCoords, setLocationCoords] = useState<{ lat: number; lon: number } | null>(null);
@@ -148,6 +325,9 @@ export default function App() {
 
   const onInsightsGalleryScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!starredGalleryUserDraggingRef.current) {
+        return;
+      }
       const w = starredGalleryPageWidth;
       if (w <= 0) {
         return;
@@ -171,6 +351,7 @@ export default function App() {
 
   const onInsightsGalleryMomentumEnd = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      starredGalleryUserDraggingRef.current = false;
       suppressStarredGalleryLayoutScrollRef.current = false;
       const w = starredGalleryPageWidth;
       if (w <= 0) {
@@ -205,6 +386,7 @@ export default function App() {
     () => INSIGHT_GROUPS.reduce((acc, group) => ({ ...acc, [group.id]: false }), {}),
   );
   const [insightContentByTab, setInsightContentByTab] = useState<Record<InsightTab, InsightContent>>(INSIGHTS_TAB_CONTENT);
+  const [insightTrendWindow, setInsightTrendWindow] = useState<InsightTrendWindow>('7d');
   const [healthKitStatus, setHealthKitStatus] = useState<'idle' | 'ready' | 'denied' | 'unsupported'>('idle');
   const [healthKitLoading, setHealthKitLoading] = useState(false);
   const [healthKitLastError, setHealthKitLastError] = useState<string | null>(null);
@@ -235,28 +417,132 @@ export default function App() {
   const [isPublishingProgressPost, setIsPublishingProgressPost] = useState(false);
   const [communityCustomPostsByName, setCommunityCustomPostsByName] = useState<Record<string, ProgressBoardPost[]>>({});
   const [showAlertsScreen, setShowAlertsScreen] = useState(false);
+  const [showProfileScreen, setShowProfileScreen] = useState(false);
   const [inviteContacts, setInviteContacts] = useState<InviteContact[]>([]);
   const [loadingInviteContacts, setLoadingInviteContacts] = useState(false);
   const [startupPermissionsRequested, setStartupPermissionsRequested] = useState(false);
   const [weatherF, setWeatherF] = useState(72);
   const [weatherLabel, setWeatherLabel] = useState('Sunny');
-  const [foodSuggestionCollapsed, setFoodSuggestionCollapsed] = useState(false);
-  const scoreDirectionRef = useRef<1 | -1>(1);
+  /** WMO code from Open-Meteo; drives header weather SVG. */
+  const [weatherCode, setWeatherCode] = useState(0);
+  /** Bumps once per minute so the dashboard greeting can follow local time boundaries. */
+  const [greetingClockTick, setGreetingClockTick] = useState(0);
+  const [foodSuggestionUnlocked, setFoodSuggestionUnlocked] = useState(false);
+  const [foodSuggestionKind, setFoodSuggestionKind] = useState<AdvisorAlertSlideKey | null>(null);
+  const [foodSuggestionBody, setFoodSuggestionBody] = useState('');
+  const [foodSuggestionGenerating, setFoodSuggestionGenerating] = useState(false);
+  const advisorSuggestionRequestRef = useRef(0);
+  const demoDriftModelRef = useRef<DemoDriftModel>(
+    buildInitialDriftModel({
+      stressValue,
+      glucoseValue,
+      activitySleepMinutes,
+      activityWaterGlasses,
+      activityMedsTaken,
+    }),
+  );
   const previousAlertDemoEnabledRef = useRef(false);
   const heartPulseAnim = useRef(new Animated.Value(0)).current;
   const alertBadgeBounceAnim = useRef(new Animated.Value(0)).current;
   const displayScore = Math.round(healthScore);
+  const glucoseNow = Math.round(glucoseValue);
+  const stressNow = Math.round(stressValue);
+  const heartRateNow = Math.round(heartRateCardValue);
   const scorePresentation = getScorePresentation(displayScore);
-  const alertCount = demoAlertEnabled ? 3 : 0;
+  const dashboardGreeting = useMemo(() => {
+    const hour = new Date().getHours();
+    if (hour < 12) {
+      return 'Good Morning!';
+    }
+    if (hour < 17) {
+      return 'Good Afternoon!';
+    }
+    return 'Good Evening!';
+  }, [greetingClockTick]);
   const allDemoToolsEnabled =
     demoScoreDriftEnabled && Object.values(demoDashboardValueDrift).every(Boolean);
-  const alertItems = demoAlertEnabled
-    ? [
-        { id: 'a1', title: 'Abnormal Glucose', detail: 'Glucose measured at 192 mg/dL.', severity: 'High' },
-        { id: 'a2', title: 'Elevated Stress', detail: 'Stress index reached 84/100.', severity: 'High' },
-        { id: 'a3', title: 'Abnormal Heart Rate', detail: 'Resting heart rate detected at 104 bpm.', severity: 'High' },
-      ]
-    : [];
+  const highAlertCandidates: Array<DemoHighAlert | null> = [
+    glucoseNow >= 170
+      ? { id: 'a1', title: 'Abnormal Glucose', detail: `Glucose measured at ${glucoseNow} mg/dL.`, severity: 'High' }
+      : null,
+    stressNow >= 70
+      ? { id: 'a2', title: 'Elevated Stress', detail: `Stress index at ${stressNow}/100.`, severity: 'High' }
+      : null,
+    heartRateNow >= 95
+      ? { id: 'a3', title: 'Abnormal Heart Rate', detail: `Resting heart rate at ${heartRateNow} bpm.`, severity: 'High' }
+      : null,
+  ];
+  const alertItems = demoAlertEnabled ? highAlertCandidates.filter(isDefined) : [];
+  const alertCount = alertItems.length;
+
+  const appendAlertLog = useCallback((partial: Pick<AlertLogEvent, 'level' | 'source' | 'message'> & { id?: string }) => {
+    setAlertEventLog((prev) => {
+      const id = partial.id ?? `ae-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      const row: AlertLogEvent = {
+        id,
+        at: new Date().toISOString(),
+        level: partial.level,
+        source: partial.source,
+        message: partial.message,
+      };
+      return [row, ...prev].slice(0, 250);
+    });
+  }, []);
+
+  const prevGlucoseHighRef = useRef(false);
+  const prevStressHighRef = useRef(false);
+  const prevHeartRateHighRef = useRef(false);
+
+  useEffect(() => {
+    const gHigh = glucoseNow >= 170;
+    const sHigh = stressNow >= 70;
+    const hHigh = heartRateNow >= 95;
+
+    if (gHigh && !prevGlucoseHighRef.current) {
+      appendAlertLog({
+        level: 'warn',
+        source: 'alert:glucose',
+        message: `Abnormal Glucose: Glucose measured at ${glucoseNow} mg/dL (threshold ≥170).`,
+      });
+    } else if (!gHigh && prevGlucoseHighRef.current) {
+      appendAlertLog({
+        level: 'info',
+        source: 'alert:glucose',
+        message: `Glucose returned below high threshold (${glucoseNow} mg/dL).`,
+      });
+    }
+    prevGlucoseHighRef.current = gHigh;
+
+    if (sHigh && !prevStressHighRef.current) {
+      appendAlertLog({
+        level: 'warn',
+        source: 'alert:stress',
+        message: `Elevated Stress: Stress index at ${stressNow}/100 (threshold ≥70).`,
+      });
+    } else if (!sHigh && prevStressHighRef.current) {
+      appendAlertLog({
+        level: 'info',
+        source: 'alert:stress',
+        message: `Stress returned below high threshold (${stressNow}/100).`,
+      });
+    }
+    prevStressHighRef.current = sHigh;
+
+    if (hHigh && !prevHeartRateHighRef.current) {
+      appendAlertLog({
+        level: 'warn',
+        source: 'alert:heart-rate',
+        message: `Abnormal Heart Rate: Resting heart rate at ${heartRateNow} bpm (threshold ≥95).`,
+      });
+    } else if (!hHigh && prevHeartRateHighRef.current) {
+      appendAlertLog({
+        level: 'info',
+        source: 'alert:heart-rate',
+        message: `Heart rate returned below high threshold (${heartRateNow} bpm).`,
+      });
+    }
+    prevHeartRateHighRef.current = hHigh;
+  }, [appendAlertLog, glucoseNow, heartRateNow, stressNow]);
   const toggleDashboardValueDrift = (key: keyof DashboardValueDriftToggles) => {
     setDemoDashboardValueDrift((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -323,6 +609,69 @@ export default function App() {
       color: '#C7A77D',
     },
   ];
+
+  /** Same HIGH bands as alert push content: glucose ≥170, stress ≥70, heart rate ≥95. */
+  const advisorSlides = useMemo((): AdvisorSlide[] => {
+    const slides: AdvisorSlide[] = [];
+    if (glucoseNow >= 170 && !dismissedAdvisorSlideKeys.glucose) {
+      slides.push({ key: 'glucose', message: 'Glucose is spiking. Need recommendations?' });
+    }
+    if (stressNow >= 70 && !dismissedAdvisorSlideKeys.stress) {
+      slides.push({ key: 'stress', message: 'Stress is spiking. Need recommendations?' });
+    }
+    if (heartRateNow >= 95 && !dismissedAdvisorSlideKeys.heartRate) {
+      slides.push({ key: 'heartRate', message: 'Heart rate is spiking. Need recommendations?' });
+    }
+    if (slides.length === 0) {
+      slides.push({ key: 'steady', message: "You're doing great!" });
+    }
+    return slides;
+  }, [dismissedAdvisorSlideKeys, glucoseNow, heartRateNow, stressNow]);
+
+  const advisorSlideKeySignature = advisorSlides.map((s) => s.key).join('-');
+
+  useEffect(() => {
+    setDismissedAdvisorSlideKeys((prev) => {
+      const next = { ...prev };
+      if (glucoseNow < 170) {
+        delete next.glucose;
+      }
+      if (stressNow < 70) {
+        delete next.stress;
+      }
+      if (heartRateNow < 95) {
+        delete next.heartRate;
+      }
+      const unchanged =
+        !!next.glucose === !!prev.glucose && !!next.stress === !!prev.stress && !!next.heartRate === !!prev.heartRate;
+      return unchanged ? prev : next;
+    });
+  }, [glucoseNow, heartRateNow, stressNow]);
+
+  useEffect(() => {
+    setAdvisorGalleryIndex(0);
+  }, [advisorSlideKeySignature]);
+
+  useEffect(() => {
+    setAdvisorGalleryScrollX(0);
+  }, [advisorSlideKeySignature, advisorGallerySlideWidth]);
+
+  useEffect(() => {
+    if (advisorSlideKeySignature === 'steady') {
+      advisorSuggestionRequestRef.current += 1;
+      setFoodSuggestionUnlocked(false);
+      setFoodSuggestionKind(null);
+      setFoodSuggestionBody('');
+      setFoodSuggestionGenerating(false);
+    }
+  }, [advisorSlideKeySignature]);
+
+  const advisorGalleryMaxScrollX = Math.max(0, (advisorSlides.length - 1) * advisorGallerySlideWidth);
+  const advisorGalleryScrollNorm =
+    advisorGalleryMaxScrollX <= 0 ? 0.5 : Math.min(1, Math.max(0, advisorGalleryScrollX / advisorGalleryMaxScrollX));
+  const advisorGalleryLeftEdgeOpacity = 0.4 + 0.35 * (1 - advisorGalleryScrollNorm);
+  const advisorGalleryRightEdgeOpacity = 0.4 + 0.35 * advisorGalleryScrollNorm;
+
   const centerX = 160;
   const centerY = 174;
   const startDeg = 205;
@@ -383,18 +732,27 @@ export default function App() {
           typeof e.latitude === 'number' &&
           typeof e.longitude === 'number' &&
           Number.isFinite(e.latitude) &&
-          Number.isFinite(e.longitude),
+          Number.isFinite(e.longitude) &&
+          e.latitude >= -90 &&
+          e.latitude <= 90 &&
+          e.longitude >= -180 &&
+          e.longitude <= 180,
       )
       .map((e) => {
         const provider = resolveEventProvider(e);
         const pinColor = provider === 'eventbrite' ? '#f97316' : '#0ea5e9';
-        const locationLine = e.address ?? e.meta;
+        const locationLine = (e.address ?? e.meta ?? '').trim();
+        const venueLine = e.venue?.trim()
+          ? locationLine
+            ? `${e.venue.trim()} · ${locationLine}`
+            : e.venue.trim()
+          : locationLine || ' ';
         return {
           id: `evt-${provider}-${e.id}`,
           latitude: e.latitude as number,
           longitude: e.longitude as number,
-          title: e.title,
-          subtitle: e.venue ? `${e.venue} · ${locationLine}` : locationLine,
+          title: (e.title && String(e.title).trim()) || 'Event',
+          subtitle: venueLine || ' ',
           pinColor,
           linkedEvent: e,
         };
@@ -487,7 +845,7 @@ export default function App() {
           time: post.time,
           caption: post.caption,
           imageLabel: post.imageLabel,
-          imageUrl: null,
+          imageUrl: post.demoCoverUrl,
           mediaPublicId: null,
           mediaVariants: null,
           mediaType: 'image' as const,
@@ -674,9 +1032,22 @@ export default function App() {
             communityId: toShareSlug(communityName),
           })
         : null;
+      const imageHints = cloudinaryResult.publicId
+        .split(/[/_-]+/)
+        .map((part) => part.trim())
+        .filter((part) => part.length >= 3)
+        .slice(0, 6);
+      const zeticResult = await generateProgressPostMetadata({
+        caption: resolvedCaption,
+        aristaContext,
+        imageHints,
+      });
+      const postedCaption = buildProgressPostDisplayCaption(zeticResult.autoDescription, zeticResult.autoTags);
       const db = getFirestoreInstance();
+      let firestoreWriteError: string | null = null;
       if (db) {
-        await addDoc(collection(db, 'progress_posts'), {
+        try {
+          const docRef = await addDoc(collection(db, 'progress_posts'), {
           communityId: toShareSlug(communityName),
           communityName,
           authorId: 'demo-user',
@@ -695,13 +1066,31 @@ export default function App() {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+          await updateDoc(docRef, {
+            status: 'ready',
+            caption: postedCaption,
+            autoDescription: zeticResult.autoDescription,
+            autoTags: zeticResult.autoTags,
+            eventContext: zeticResult.useEventContext ? (aristaContext?.event ?? null) : null,
+            zeticConfidence: zeticResult.confidence,
+            zeticSource: zeticResult.source,
+            zeticError: zeticResult.error,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (error) {
+          firestoreWriteError = toErrorText(error);
+        }
       }
       updateCommunityPost(communityName, localPostId, {
-        imageLabel: 'Uploaded progress photo',
+        caption: postedCaption,
+        imageLabel: firestoreWriteError
+          ? 'Uploaded photo (cloud only)'
+          : 'Uploaded progress photo',
         imageUrl: mediaVariants.feedUrl,
         mediaPublicId: cloudinaryResult.publicId,
         mediaVariants,
         status: 'ready',
+        processingError: firestoreWriteError,
       });
       setShowCreateProgressPostModal(false);
       setCreatePostCaption('');
@@ -730,7 +1119,7 @@ export default function App() {
       return;
     }
     const message = encodeURIComponent(
-      `Join me in ${selectedJoinedCommunity.name} on Connected Wellness: ${selectedCommunityShareLink}`,
+      `Join me in ${selectedJoinedCommunity.name} on ${APP_DISPLAY_NAME}: ${selectedCommunityShareLink}`,
     );
     const separator = Platform.OS === 'ios' ? '&' : '?';
     const smsUrl = `sms:${contact.phone}${separator}body=${message}`;
@@ -763,6 +1152,10 @@ export default function App() {
       ],
     );
   };
+
+  useEffect(() => {
+    void preloadZeticModel();
+  }, []);
 
   useEffect(() => {
     const loadCommunityEvents = async () => {
@@ -818,7 +1211,7 @@ export default function App() {
     };
   }, [activeTab, mapCoords]);
 
-  const initHealthKitAsync = async () => {
+  const initHealthKitAsync = async (trendWindow: InsightTrendWindow = '7d') => {
     if (healthKitLoading) {
       return;
     }
@@ -886,8 +1279,6 @@ export default function App() {
       weekStart.setDate(now.getDate() - 7);
       const yesterdayStart = new Date(dayStart);
       yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-      const fourteenDaysStart = new Date(dayStart);
-      fourteenDaysStart.setDate(fourteenDaysStart.getDate() - 14);
 
       const formatTrend = (current: number, previous: number, suffix: string) => {
         if (current <= 0 && previous <= 0) {
@@ -900,17 +1291,46 @@ export default function App() {
         const sign = deltaPct >= 0 ? '+' : '';
         return `Trend: ${sign}${deltaPct.toFixed(1)}% vs previous period`;
       };
-      const dayLabel = (value: Date) => value.toLocaleDateString('en-US', { weekday: 'short' }).charAt(0);
-      const getLastNDays = (n: number) =>
+      const getLastNDaysFrom = (anchor: Date, n: number) =>
         Array.from({ length: n }, (_, index) => {
-          const d = new Date(dayStart);
-          d.setDate(dayStart.getDate() - (n - 1 - index));
+          const d = new Date(anchor);
+          d.setHours(0, 0, 0, 0);
+          d.setDate(anchor.getDate() - (n - 1 - index));
           return d;
         });
-      const sevenDayDates = getLastNDays(7);
-      const sevenDayLabels = sevenDayDates.map(dayLabel);
+      const dayLabelShort = (value: Date) => value.toLocaleDateString('en-US', { weekday: 'short' }).charAt(0);
+      const mdLabel = (value: Date) => `${value.getMonth() + 1}/${value.getDate()}`;
+
+      let bucketDates: Date[];
+      let bucketLabels: string[];
+      let extendedSampleStart: Date;
+      if (trendWindow === '7d') {
+        bucketDates = getLastNDaysFrom(dayStart, 7);
+        bucketLabels = bucketDates.map(dayLabelShort);
+        extendedSampleStart = new Date(bucketDates[0]);
+        extendedSampleStart.setDate(extendedSampleStart.getDate() - 14);
+      } else if (trendWindow === '30d') {
+        bucketDates = getLastNDaysFrom(dayStart, 30);
+        bucketLabels = bucketDates.map((d, i) => (i % 5 === 0 || i === bucketDates.length - 1 ? mdLabel(d) : '·'));
+        extendedSampleStart = new Date(bucketDates[0]);
+        extendedSampleStart.setDate(extendedSampleStart.getDate() - 5);
+      } else {
+        const yearStart = new Date(dayStart.getFullYear(), 0, 1);
+        yearStart.setHours(0, 0, 0, 0);
+        bucketDates = [];
+        const walk = new Date(yearStart);
+        while (walk.getTime() <= dayStart.getTime()) {
+          bucketDates.push(new Date(walk.getFullYear(), walk.getMonth(), walk.getDate()));
+          walk.setDate(walk.getDate() + 1);
+        }
+        const labelStep = Math.max(1, Math.ceil(bucketDates.length / 14));
+        bucketLabels = bucketDates.map((d, i) => (i % labelStep === 0 || i === bucketDates.length - 1 ? mdLabel(d) : '·'));
+        extendedSampleStart = new Date(yearStart);
+        extendedSampleStart.setDate(yearStart.getDate() - 10);
+      }
+
       const toDayKey = (value: Date) => value.toISOString().slice(0, 10);
-      const zeroSeries = () => [0, 0, 0, 0, 0, 0, 0];
+      const zeroSeries = () => new Array(bucketDates.length).fill(0);
       const latest = (series: number[]) => series[series.length - 1] ?? 0;
       const previous = (series: number[]) => series[series.length - 2] ?? 0;
       const loadSeriesFromSamples = async (
@@ -937,7 +1357,7 @@ export default function App() {
                 : sample.endDate
                   ? new Date(sample.endDate).getTime()
                   : 0;
-              if (!ts || ts < sevenDayDates[0].getTime()) {
+              if (!ts || ts < bucketDates[0].getTime()) {
                 return;
               }
               const key = toDayKey(new Date(ts));
@@ -946,7 +1366,7 @@ export default function App() {
               prevVal.count += 1;
               byDay.set(key, prevVal);
             });
-            const series = sevenDayDates.map((d) => {
+            const series = bucketDates.map((d) => {
               const day = byDay.get(toDayKey(d));
               if (!day || day.count === 0) {
                 return 0;
@@ -969,11 +1389,12 @@ export default function App() {
       let activeEnergyPrevious = 0;
       let mindfulSessions = 0;
       let mindfulSessionsPrevious = 0;
-      let heartRateTrendPoints = new Array(7).fill(0);
-      let stepTrendPoints = new Array(7).fill(0);
-      let sleepTrendPoints = new Array(7).fill(0);
-      let activeEnergyTrendPoints = new Array(7).fill(0);
-      let mindfulnessTrendPoints = new Array(7).fill(0);
+      const bucketLen = bucketDates.length;
+      let heartRateTrendPoints = new Array(bucketLen).fill(0);
+      let stepTrendPoints = new Array(bucketLen).fill(0);
+      let sleepTrendPoints = new Array(bucketLen).fill(0);
+      let activeEnergyTrendPoints = new Array(bucketLen).fill(0);
+      let mindfulnessTrendPoints = new Array(bucketLen).fill(0);
       let restingHeartRateTrendPoints = zeroSeries();
       let hrvTrendPoints = zeroSeries();
       let respiratoryTrendPoints = zeroSeries();
@@ -1000,7 +1421,7 @@ export default function App() {
         await new Promise<void>((resolve) => {
           healthKit.getHeartRateSamples?.(
             {
-              startDate: fourteenDaysStart.toISOString(),
+              startDate: extendedSampleStart.toISOString(),
               endDate: now.toISOString(),
             },
             (_error, result) => {
@@ -1016,7 +1437,7 @@ export default function App() {
               const byDay = new Map<string, number[]>();
               samples.forEach((sample) => {
                 const ts = sample.startDate ? new Date(sample.startDate).getTime() : 0;
-                if (!ts || ts < sevenDayDates[0].getTime()) {
+                if (!ts || ts < bucketDates[0].getTime()) {
                   return;
                 }
                 const key = toDayKey(new Date(ts));
@@ -1026,7 +1447,7 @@ export default function App() {
                   byDay.set(key, prev);
                 }
               });
-              heartRateTrendPoints = sevenDayDates.map((d) => {
+              heartRateTrendPoints = bucketDates.map((d) => {
                 const valsForDay = byDay.get(toDayKey(d)) ?? [];
                 if (valsForDay.length === 0) {
                   return 0;
@@ -1041,7 +1462,7 @@ export default function App() {
       }
       if (healthKit.getStepCount) {
         const stepResults: number[] = [];
-        for (const date of sevenDayDates) {
+        for (const date of bucketDates) {
           // eslint-disable-next-line no-await-in-loop
           await new Promise<void>((resolve) => {
             const rangeStart = new Date(date);
@@ -1069,7 +1490,7 @@ export default function App() {
         await new Promise<void>((resolve) => {
           healthKit.getSleepSamples?.(
             {
-              startDate: fourteenDaysStart.toISOString(),
+              startDate: extendedSampleStart.toISOString(),
               endDate: now.toISOString(),
             },
             (_error, result) => {
@@ -1089,7 +1510,7 @@ export default function App() {
                 const prev = sleepByDay.get(key) ?? 0;
                 sleepByDay.set(key, prev + (end - start) / (1000 * 60));
               });
-              sleepTrendPoints = sevenDayDates.map((d) => Number(((sleepByDay.get(toDayKey(d)) ?? 0) / 60).toFixed(1)));
+              sleepTrendPoints = bucketDates.map((d) => Number(((sleepByDay.get(toDayKey(d)) ?? 0) / 60).toFixed(1)));
 
               const midpoint = new Date(dayStart);
               midpoint.setDate(midpoint.getDate() - 7);
@@ -1145,7 +1566,7 @@ export default function App() {
                 const key = toDayKey(new Date(dt));
                 byDay.set(key, (byDay.get(key) ?? 0) + (sample.value ?? 0));
               });
-              activeEnergyTrendPoints = sevenDayDates.map((d) => Math.round(byDay.get(toDayKey(d)) ?? 0));
+              activeEnergyTrendPoints = bucketDates.map((d) => Math.round(byDay.get(toDayKey(d)) ?? 0));
               const split = dayStart.getTime();
               activeEnergyKcal = Math.round(
                 samples
@@ -1172,7 +1593,7 @@ export default function App() {
         await new Promise<void>((resolve) => {
           healthKit.getMindfulSession?.(
             {
-              startDate: fourteenDaysStart.toISOString(),
+              startDate: extendedSampleStart.toISOString(),
               endDate: now.toISOString(),
             },
             (_error, result) => {
@@ -1186,7 +1607,7 @@ export default function App() {
                 const key = toDayKey(new Date(ts));
                 byDay.set(key, (byDay.get(key) ?? 0) + 1);
               });
-              mindfulnessTrendPoints = sevenDayDates.map((d) => byDay.get(toDayKey(d)) ?? 0);
+              mindfulnessTrendPoints = bucketDates.map((d) => byDay.get(toDayKey(d)) ?? 0);
               mindfulSessions = sessions.filter((sample) => {
                 const start = sample.startDate ? new Date(sample.startDate).getTime() : 0;
                 return start >= weekStart.getTime();
@@ -1199,7 +1620,7 @@ export default function App() {
       }
 
       const baseRange = {
-        startDate: sevenDayDates[0].toISOString(),
+        startDate: bucketDates[0].toISOString(),
         endDate: now.toISOString(),
       };
 
@@ -1278,7 +1699,7 @@ export default function App() {
           trend: formatTrend(heartRateValue, heartRatePrevious, ' bpm'),
           recommendation: 'Track heart rate daily for stronger baseline trends.',
           trendPoints: heartRateTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'bpm',
         },
         'Resting Heart Rate': {
@@ -1289,7 +1710,7 @@ export default function App() {
           trend: formatTrend(latest(restingHeartRateTrendPoints), previous(restingHeartRateTrendPoints), ' bpm'),
           recommendation: 'A lower, stable resting heart rate often reflects good recovery.',
           trendPoints: restingHeartRateTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'bpm',
         },
         'Heart Rate Variability': {
@@ -1298,7 +1719,7 @@ export default function App() {
           trend: formatTrend(latest(hrvTrendPoints), previous(hrvTrendPoints), ' ms'),
           recommendation: 'Consistent sleep and stress management can improve HRV over time.',
           trendPoints: hrvTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'ms',
         },
         'Respiratory Rate': {
@@ -1309,7 +1730,7 @@ export default function App() {
           trend: formatTrend(latest(respiratoryTrendPoints), previous(respiratoryTrendPoints), ' br/min'),
           recommendation: 'Watch for sustained shifts and pair with recovery signals.',
           trendPoints: respiratoryTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'br/min',
         },
         'Blood Oxygen': {
@@ -1318,7 +1739,7 @@ export default function App() {
           trend: formatTrend(latest(bloodOxygenTrendPoints), previous(bloodOxygenTrendPoints), '%'),
           recommendation: 'Regular sleep and cardio activity can support oxygen efficiency.',
           trendPoints: bloodOxygenTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: '%',
         },
         Steps: {
@@ -1327,7 +1748,7 @@ export default function App() {
           trend: formatTrend(stepCountValue, stepCountPrevious, ' steps'),
           recommendation: 'Aim for short walking breaks to increase daily steps.',
           trendPoints: stepTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'steps',
         },
         'Walking + Running Distance': {
@@ -1336,7 +1757,7 @@ export default function App() {
           trend: formatTrend(latest(distanceTrendPoints), previous(distanceTrendPoints), ' mi'),
           recommendation: 'Steady distance growth usually follows small daily consistency.',
           trendPoints: distanceTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'mi',
         },
         'Flights Climbed': {
@@ -1345,7 +1766,7 @@ export default function App() {
           trend: formatTrend(latest(flightsTrendPoints), previous(flightsTrendPoints), ' floors'),
           recommendation: 'Short stair sessions are an easy way to increase intensity.',
           trendPoints: flightsTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'floors',
         },
         Sleep: {
@@ -1354,7 +1775,7 @@ export default function App() {
           trend: formatTrend(sleepHours, sleepHoursPrevious, 'h'),
           recommendation: 'Maintain consistent wind-down to improve sleep duration.',
           trendPoints: sleepTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'h',
         },
         'Active Energy': {
@@ -1363,7 +1784,7 @@ export default function App() {
           trend: formatTrend(activeEnergyKcal, activeEnergyPrevious, ' kcal'),
           recommendation: 'Add brief activity intervals to increase active energy burn.',
           trendPoints: activeEnergyTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'kcal',
         },
         'Basal Energy': {
@@ -1372,7 +1793,7 @@ export default function App() {
           trend: formatTrend(latest(basalEnergyTrendPoints), previous(basalEnergyTrendPoints), ' kcal'),
           recommendation: 'Basal energy reflects foundational metabolism and body needs.',
           trendPoints: basalEnergyTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'kcal',
         },
         'Exercise Time': {
@@ -1381,7 +1802,7 @@ export default function App() {
           trend: formatTrend(latest(exerciseTimeTrendPoints), previous(exerciseTimeTrendPoints), ' min'),
           recommendation: 'Short exercise blocks compound well over a week.',
           trendPoints: exerciseTimeTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'min',
         },
         'Stand Time': {
@@ -1390,7 +1811,7 @@ export default function App() {
           trend: formatTrend(latest(standTimeTrendPoints), previous(standTimeTrendPoints), ' min'),
           recommendation: 'Break up sitting every hour to improve stand trends.',
           trendPoints: standTimeTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'min',
         },
         Mindfulness: {
@@ -1399,7 +1820,7 @@ export default function App() {
           trend: formatTrend(mindfulSessions, mindfulSessionsPrevious, ' sessions'),
           recommendation: 'A short daily mindful session can support stress recovery.',
           trendPoints: mindfulnessTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'sessions',
         },
         'Body Temperature': {
@@ -1410,7 +1831,7 @@ export default function App() {
           trend: formatTrend(latest(bodyTemperatureTrendPoints), previous(bodyTemperatureTrendPoints), ' degF'),
           recommendation: 'Use trends, not single points, to interpret temperature changes.',
           trendPoints: bodyTemperatureTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'degF',
         },
         Weight: {
@@ -1419,7 +1840,7 @@ export default function App() {
           trend: formatTrend(latest(weightTrendPoints), previous(weightTrendPoints), ' lb'),
           recommendation: 'Weekly averages are more meaningful than daily fluctuations.',
           trendPoints: weightTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'lb',
         },
         'VO2 Max': {
@@ -1428,7 +1849,7 @@ export default function App() {
           trend: formatTrend(latest(vo2MaxTrendPoints), previous(vo2MaxTrendPoints), ' mL/kg/min'),
           recommendation: 'Cardio consistency is key for meaningful VO2 max improvements.',
           trendPoints: vo2MaxTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'mL/kg/min',
         },
         'Blood Glucose': {
@@ -1437,7 +1858,7 @@ export default function App() {
           trend: formatTrend(latest(bloodGlucoseTrendPoints), previous(bloodGlucoseTrendPoints), ' mg/dL'),
           recommendation: 'Pair glucose trends with meals and activity for context.',
           trendPoints: bloodGlucoseTrendPoints,
-          trendLabels: sevenDayLabels,
+          trendLabels: bucketLabels,
           trendUnit: 'mg/dL',
         },
       });
@@ -1477,7 +1898,7 @@ export default function App() {
         }
       }
       if (!cancelled) {
-        void initHealthKitAsync();
+        void initHealthKitAsync('7d');
       }
     }
     void requestStartupPermissions();
@@ -1538,6 +1959,7 @@ export default function App() {
         if (!cancelled) {
           setWeatherF(snapshot.temperatureF);
           setWeatherLabel(snapshot.conditionLabel);
+          setWeatherCode(snapshot.weatherCode);
         }
       } catch {
         // Keep existing fallback values on failure.
@@ -1552,19 +1974,50 @@ export default function App() {
   }, [useDeviceLocation, locationCoords]);
 
   useEffect(() => {
-    if (!demoScoreDriftEnabled) {
+    const id = setInterval(() => {
+      setGreetingClockTick((n) => n + 1);
+    }, 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const anyDashboardDriftEnabled = Object.values(demoDashboardValueDrift).some(Boolean);
+    const anyDemoDriftEnabled = demoScoreDriftEnabled || anyDashboardDriftEnabled;
+    if (!anyDemoDriftEnabled) {
       return;
     }
-    const intervalMs = demoFastDriftEnabled ? 380 : 700;
+
+    const intervalMs = demoFastDriftEnabled ? 380 : 760;
     const interval = setInterval(() => {
-      setHealthScore((prev: number) => {
-        const result = getNextDemoScore(prev, scoreDirectionRef.current, demoFastDriftEnabled);
-        scoreDirectionRef.current = result.nextDirection;
-        return result.next;
-      });
+      const snapshot = getNextDriftSnapshot(demoDriftModelRef.current, demoFastDriftEnabled);
+
+      if (demoScoreDriftEnabled) {
+        setHealthScore(snapshot.score);
+      }
+      if (demoDashboardValueDrift.glucose) {
+        setGlucoseValue(snapshot.glucose);
+      }
+      if (demoDashboardValueDrift.stress) {
+        setStressValue(snapshot.stress);
+      }
+      if (demoDashboardValueDrift.heartRateCard) {
+        setHeartRateCardValue(snapshot.heartRate);
+      }
+      if (demoDashboardValueDrift.steps) {
+        setActivitySteps((prev) => clamp(prev + snapshot.stepDelta, 0, 25000));
+      }
+      if (demoDashboardValueDrift.sleep) {
+        setActivitySleepMinutes(snapshot.sleepMinutes);
+      }
+      if (demoDashboardValueDrift.meds) {
+        setActivityMedsTaken(snapshot.meds);
+      }
+      if (demoDashboardValueDrift.water) {
+        setActivityWaterGlasses(snapshot.water);
+      }
     }, intervalMs);
     return () => clearInterval(interval);
-  }, [demoScoreDriftEnabled, demoFastDriftEnabled]);
+  }, [demoScoreDriftEnabled, demoDashboardValueDrift, demoFastDriftEnabled]);
 
   useEffect(() => {
     const pulseLoop = Animated.loop(
@@ -1609,41 +2062,6 @@ export default function App() {
     return () => bounceLoop.stop();
   }, [alertCount, alertBadgeBounceAnim]);
 
-  useEffect(() => {
-    const anyDashboardDriftEnabled = Object.values(demoDashboardValueDrift).some(Boolean);
-    if (!anyDashboardDriftEnabled) {
-      return;
-    }
-    const intervalMs = demoFastDriftEnabled ? 380 : 760;
-    const interval = setInterval(() => {
-      const jitter = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
-      if (demoDashboardValueDrift.glucose) {
-        setGlucoseValue((prev) => Math.max(70, Math.min(240, prev + jitter(-5, 6))));
-      }
-      if (demoDashboardValueDrift.stress) {
-        setStressValue((prev) => Math.max(0, Math.min(100, prev + jitter(-4, 5))));
-      }
-      if (demoDashboardValueDrift.heartRateCard) {
-        setHeartRateCardValue((prev) => Math.max(45, Math.min(130, prev + jitter(-3, 4))));
-      }
-      if (demoDashboardValueDrift.steps) {
-        setActivitySteps((prev) => Math.max(0, Math.min(25000, prev + jitter(40, 280))));
-      }
-      if (demoDashboardValueDrift.sleep) {
-        setActivitySleepMinutes((prev) => Math.max(180, Math.min(9 * 60 + 59, prev + jitter(-12, 14))));
-      }
-      if (demoDashboardValueDrift.meds) {
-        setActivityMedsTaken((prev) => {
-          const next = prev + jitter(-1, 1);
-          return Math.max(0, Math.min(2, next));
-        });
-      }
-      if (demoDashboardValueDrift.water) {
-        setActivityWaterGlasses((prev) => Math.max(0, Math.min(12, prev + jitter(-1, 1))));
-      }
-    }, intervalMs);
-    return () => clearInterval(interval);
-  }, [demoDashboardValueDrift, demoFastDriftEnabled]);
 
   useEffect(() => {
     const wasEnabled = previousAlertDemoEnabledRef.current;
@@ -1668,36 +2086,46 @@ export default function App() {
             return;
           }
         }
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: 'Abnormal Glucose',
-            body: 'Glucose at 192 mg/dL.',
-            sound: 'default',
-          },
-          trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 1, repeats: false },
-        });
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: 'Elevated Stress',
-            body: 'Stress index reached 84/100.',
-            sound: 'default',
-          },
-          trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 2, repeats: false },
-        });
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: 'Abnormal Heart Rate',
-            body: 'Resting heart rate at 104 bpm.',
-            sound: 'default',
-          },
-          trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 3, repeats: false },
-        });
+        const pushAlerts = highAlertCandidates.filter(isDefined);
+        if (pushAlerts.length === 0) {
+          appendAlertLog({
+            level: 'info',
+            source: 'demo-alerts',
+            message: 'Demo alerts enabled: no active high alerts to schedule as local notifications.',
+          });
+        } else {
+          appendAlertLog({
+            level: 'info',
+            source: 'demo-alerts',
+            message: `Demo alerts enabled: scheduling ${pushAlerts.length} local notification(s).`,
+          });
+        }
+        for (let i = 0; i < pushAlerts.length; i += 1) {
+          const alert = pushAlerts[i];
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: alert.title,
+              body: alert.detail,
+              sound: 'default',
+            },
+            trigger: {
+              type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+              seconds: i + 1,
+              repeats: false,
+            },
+          });
+          appendAlertLog({
+            level: 'info',
+            source: 'demo-push',
+            message: `Scheduled push: ${alert.title} — ${alert.detail}`,
+          });
+        }
       } catch {
         // Ignore notification failures in demo mode.
       }
     }
     void sendAlertDemoNotifications();
-  }, [demoAlertEnabled]);
+  }, [appendAlertLog, demoAlertEnabled, highAlertCandidates]);
 
   useEffect(() => {
     if (activeTab !== 'Map') {
@@ -1753,7 +2181,7 @@ export default function App() {
     if (activeTab !== 'Insights' || healthKitStatus === 'ready' || healthKitLoading) {
       return;
     }
-    void initHealthKitAsync();
+    void initHealthKitAsync(insightTrendWindow);
   }, [activeTab, healthKitStatus, healthKitLoading]);
 
   useEffect(() => {
@@ -1810,201 +2238,133 @@ export default function App() {
     return () => clearInterval(id);
   }, [activeTab, activeInsightTab, dashboardQuickMetrics]);
 
+  useEffect(() => {
+    if (activeTab !== 'Insights') {
+      starredGalleryUserDraggingRef.current = false;
+    }
+  }, [activeTab]);
+
   return (
     <View style={styles.container}>
       <View style={styles.gridOverlay} />
       <View style={styles.topGlow} />
       <StatusBar style="light" />
-      {activeTab === 'Map' ? (
-        <MapScreen
-          activeMapLayer={activeMapLayer}
-          mapCoords={mapCoords}
-          mapDiscoveryEventsLoading={mapDiscoveryEventsLoading}
-          mapLocationStatus={mapLocationStatus}
-          mapRecommendations={mapRecommendations}
-          mapViewRef={mapViewRef}
-          openEventLinkPrompt={openEventLinkPrompt}
-          recenterMapToCurrentLocation={recenterMapToCurrentLocation}
-          setActiveMapLayer={setActiveMapLayer}
-        />
-      ) : activeTab === 'Insights' ? (
-        <InsightsScreen
-          activeInsightTab={activeInsightTab}
-          dashboardQuickMetrics={dashboardQuickMetrics}
-          filteredQuickMetricOptions={filteredQuickMetricOptions}
-          healthKitLastError={healthKitLastError}
-          healthKitLoading={healthKitLoading}
-          healthKitStatus={healthKitStatus}
-          initHealthKitAsync={initHealthKitAsync}
-          insightContentByTab={insightContentByTab}
-          insightsGalleryScrollPages={insightsGalleryScrollPages}
-          onInsightsGalleryMomentumEnd={onInsightsGalleryMomentumEnd}
-          onInsightsGalleryScroll={onInsightsGalleryScroll}
-          quickMetricSearchQuery={quickMetricSearchQuery}
-          selectedInsightContent={selectedInsightContent}
-          setActiveInsightTab={setActiveInsightTab}
-          setExpandedInsightGroups={setExpandedInsightGroups}
-          setHealthKitStatus={setHealthKitStatus}
-          setQuickMetricSearchQuery={setQuickMetricSearchQuery}
-          setStarredGalleryIndex={setStarredGalleryIndex}
-          starredGalleryIndex={starredGalleryIndex}
-          starredGalleryPageWidth={starredGalleryPageWidth}
-          starredGalleryScrollRef={starredGalleryScrollRef}
-          starredGallerySuppressAutoUntilRef={starredGallerySuppressAutoUntilRef}
-          suppressStarredGalleryLayoutScrollRef={suppressStarredGalleryLayoutScrollRef}
-          toggleDashboardQuickMetric={toggleDashboardQuickMetric}
-          expandedInsightGroups={expandedInsightGroups}
-        />
-      ) : activeTab === 'Goals' ? (
-        <GoalsScreen
-          challengeFilter={challengeFilter}
-          communitySearchQuery={communitySearchQuery}
-          displayedEvents={displayedEvents}
-          eventsTab={eventsTab}
-          filteredChallenges={filteredChallenges}
-          filteredCommunities={filteredCommunities}
-          goalsTab={goalsTab}
-          inviteContactBySms={inviteContactBySms}
-          inviteContacts={inviteContacts}
-          isInteractingWithEventsList={isInteractingWithEventsList}
-          joinedCommunities={joinedCommunities}
-          joinedCommunityNames={joinedCommunityNames}
-          loadingCommunityEvents={loadingCommunityEvents}
-          loadingInviteContacts={loadingInviteContacts}
-          openCreateProgressPostModal={openCreateProgressPostModal}
-          openEventLinkPrompt={openEventLinkPrompt}
-          openInviteContacts={openInviteContacts}
-          progressPostsForSelectedCommunity={progressPostsForSelectedCommunity}
-          selectedCommunityAction={selectedCommunityAction}
-          selectedCommunityShareLink={selectedCommunityShareLink}
-          selectedJoinedCommunity={selectedJoinedCommunity}
-          setChallengeFilter={setChallengeFilter}
-          setCommunitySearchQuery={setCommunitySearchQuery}
-          setEventsTab={setEventsTab}
-          setGoalsTab={setGoalsTab}
-          setIsInteractingWithEventsList={setIsInteractingWithEventsList}
-          setJoinedCommunityNames={setJoinedCommunityNames}
-          setSelectedCommunityAction={setSelectedCommunityAction}
-          setSelectedJoinedCommunityName={setSelectedJoinedCommunityName}
-          setShowCreatePersonalChallengeModal={setShowCreatePersonalChallengeModal}
-          setShowInvitePopup={setShowInvitePopup}
-          setShowOverviewPopup={setShowOverviewPopup}
-          showInvitePopup={showInvitePopup}
-          showOverviewPopup={showOverviewPopup}
-        />
-      ) : (
+      <View style={{ flex: 1 }}>
+        {/* Dashboard stays mounted so local assets (e.g. chanmoji) are not torn down on every tab switch. */}
+                      <View
+          collapsable={false}
+          pointerEvents={activeTab === 'Dashboard' ? 'auto' : 'none'}
+                                      style={[
+            styles.tabStackLayer,
+            {
+              opacity: activeTab === 'Dashboard' ? 1 : 0,
+              zIndex: activeTab === 'Dashboard' ? 2 : 0,
+            },
+          ]}
+        >
         <>
-          <ScrollView bounces={false} contentContainerStyle={styles.content} overScrollMode="never" showsVerticalScrollIndicator={false}>
-            <View style={styles.header}>
-              <TouchableOpacity
-                hitSlop={{ top: 14, right: 14, left: 14, bottom: 6 }}
-                onPress={() => setShowAlertsScreen(true)}
-                style={styles.alertBlock}
-              >
-                <View style={styles.alertIconWrap}>
-                  <Svg height={28} pointerEvents="none" viewBox="0 0 48 32" width={40}>
-                    <Path
-                      d="M9 8h4l3-3h16l3 3h4l3 4v11l-3 3h-4l-2 2H15l-2-2H9l-3-3V12l3-4zm7 4c-4 0-7 3-7 7s3 7 7 7h16c4 0 7-3 7-7s-3-7-7-7H16zm7 2h6v3h-6v-3z"
-                      fill="none"
-                      stroke="#eab308"
-                      strokeWidth={2.2}
-                    />
-                  </Svg>
-                  {alertCount > 0 ? (
-                    <Animated.View
-                      style={[
-                        styles.alertBadge,
+        <ScrollView bounces={false} contentContainerStyle={styles.content} overScrollMode="never" showsVerticalScrollIndicator={false}>
+        <View style={styles.header}>
+          <TouchableOpacity
+            hitSlop={{ top: 14, right: 14, left: 14, bottom: 6 }}
+            onPress={() => setShowAlertsScreen(true)}
+            style={styles.alertBlock}
+          >
+            <View style={styles.alertIconWrap}>
+              <Svg height={28} pointerEvents="none" viewBox="0 0 48 32" width={40}>
+                <Path
+                  d="M9 8h4l3-3h16l3 3h4l3 4v11l-3 3h-4l-2 2H15l-2-2H9l-3-3V12l3-4zm7 4c-4 0-7 3-7 7s3 7 7 7h16c4 0 7-3 7-7s-3-7-7-7H16zm7 2h6v3h-6v-3z"
+                  fill="none"
+                  stroke="#eab308"
+                  strokeWidth={2.2}
+                />
+              </Svg>
+              {alertCount > 0 ? (
+                <Animated.View
+                  style={[
+                    styles.alertBadge,
+                    {
+                      transform: [
                         {
-                          transform: [
-                            {
-                              translateY: alertBadgeBounceAnim.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [0, -10],
-                              }),
-                            },
-                            {
-                              scale: alertBadgeBounceAnim.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [1, 1.22],
-                              }),
-                            },
-                          ],
+                          translateY: alertBadgeBounceAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, -10],
+                          }),
                         },
-                      ]}
-                    >
-                      <Text style={styles.alertBadgeText}>{alertCount}</Text>
-                    </Animated.View>
-                  ) : null}
-                </View>
-                <Text style={styles.alertText}>{alertCount > 0 ? `${alertCount} Alerts` : 'No alerts'}</Text>
-              </TouchableOpacity>
-              <View style={styles.headerLeft}>
-                <TouchableOpacity onPress={() => setSidebarOpen(true)} style={styles.menuBtn}>
-                  <View style={styles.menuLine} />
-                  <View style={styles.menuLine} />
-                  <View style={styles.menuLine} />
-                </TouchableOpacity>
-                <View>
-                  <Text style={styles.greeting}>Good morning!</Text>
-                  <Text style={styles.date}>April 24, 2026 • Friday</Text>
-                </View>
-              </View>
-              <View style={styles.weatherBlock}>
-                <View style={styles.weatherTopRow}>
-                  <Svg height={26} viewBox="0 0 24 24" width={26}>
-                    <Path
-                      d="M12 7a5 5 0 1 0 0 10a5 5 0 0 0 0-10zm0-5v3m0 14v3M2 12h3m14 0h3M4.9 4.9l2.1 2.1m9.98 9.98l2.12 2.12m0-14.2l-2.12 2.1M7 17l-2.1 2.12"
-                      fill="none"
-                      stroke="#facc15"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.8}
-                    />
-                  </Svg>
-                  <Text style={styles.weatherText}>{weatherF}°F</Text>
-                </View>
-                <Text style={styles.weatherSubText}>{weatherLabel}</Text>
-              </View>
+                        {
+                          scale: alertBadgeBounceAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [1, 1.22],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                >
+                  <Text style={styles.alertBadgeText}>{alertCount}</Text>
+                </Animated.View>
+              ) : null}
             </View>
-            <View style={styles.scoreCard}>
-              <View style={styles.gaugeWrap}>
-                <Svg height={236} viewBox="0 0 320 236" width="100%">
-                  <Defs>
-                    <LinearGradient id="healthGrad" x1="0%" x2="100%" y1="0%" y2="0%">
-                      <Stop offset="0%" stopColor="#ef4444" />
-                      <Stop offset="50%" stopColor="#eab308" />
-                      <Stop offset="100%" stopColor="#22c55e" />
-                    </LinearGradient>
-                    <LinearGradient id="outerGradA" x1="0%" x2="100%" y1="0%" y2="0%">
-                      <Stop offset="0%" stopColor="#ef4444" stopOpacity="0.36" />
-                      <Stop offset="50%" stopColor="#eab308" stopOpacity="0.3" />
-                      <Stop offset="100%" stopColor="#22c55e" stopOpacity="0.36" />
-                    </LinearGradient>
-                  </Defs>
+            <Text style={styles.alertText}>{alertCount > 0 ? `${alertCount} Alerts` : 'No alerts'}</Text>
+          </TouchableOpacity>
+          <View style={styles.headerLeft}>
+            <TouchableOpacity onPress={() => setSidebarOpen(true)} style={styles.menuBtn}>
+              <View style={styles.menuLine} />
+              <View style={styles.menuLine} />
+              <View style={styles.menuLine} />
+            </TouchableOpacity>
+            <View>
+                  <Text style={styles.greeting}>{dashboardGreeting}</Text>
+              <Text style={styles.date}>April 24, 2026 • Friday</Text>
+            </View>
+          </View>
+          <View style={styles.weatherBlock}>
+            <View style={styles.weatherTopRow}>
+                  <WeatherIcon size={36} weatherCode={weatherCode} />
+              <Text style={styles.weatherText}>{weatherF}°F</Text>
+            </View>
+            <Text style={styles.weatherSubText}>{weatherLabel}</Text>
+          </View>
+        </View>
+        <View style={styles.scoreCard}>
+          <View style={styles.gaugeWrap}>
+            <Svg height={236} viewBox="0 0 320 236" width="100%">
+              <Defs>
+                <LinearGradient id="healthGrad" x1="0%" x2="100%" y1="0%" y2="0%">
+                  <Stop offset="0%" stopColor="#ef4444" />
+                  <Stop offset="50%" stopColor="#eab308" />
+                  <Stop offset="100%" stopColor="#22c55e" />
+                </LinearGradient>
+                <LinearGradient id="outerGradA" x1="0%" x2="100%" y1="0%" y2="0%">
+                  <Stop offset="0%" stopColor="#ef4444" stopOpacity="0.36" />
+                  <Stop offset="50%" stopColor="#eab308" stopOpacity="0.3" />
+                  <Stop offset="100%" stopColor="#22c55e" stopOpacity="0.36" />
+                </LinearGradient>
+              </Defs>
                   <Path d={arcPath(138, -4, 104, 1)} fill="none" stroke="url(#outerGradA)" strokeLinecap="round" strokeWidth={1.6} />
                   <Path d="M -40 22 C 0 22 22 22 44 22 C 68 22 84 19 102 14 C 114 10 120 8 126 8" fill="none" stroke="rgba(255,255,255,0.36)" strokeLinecap="round" strokeWidth={1.35} />
                   <Path d="M 194 8 C 200 8 206 10 218 14 C 236 19 252 22 276 22 C 298 22 320 22 360 22" fill="none" stroke="rgba(255,255,255,0.36)" strokeLinecap="round" strokeWidth={1.35} />
                   <Path d="M -36 38 C 8 38 30 38 50 38 C 74 38 92 34 110 30 C 120 26 126 24 132 24" fill="none" stroke="rgba(255,255,255,0.24)" strokeLinecap="round" strokeWidth={1.05} />
                   <Path d="M 188 24 C 194 24 200 26 210 30 C 228 34 246 38 270 38 C 290 38 312 38 356 38" fill="none" stroke="rgba(255,255,255,0.24)" strokeLinecap="round" strokeWidth={1.05} />
-                  {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90].map((startPct, idx) => {
-                    const endPct = startPct + 9;
+              {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90].map((startPct, idx) => {
+                const endPct = startPct + 9;
                     const colors = ['#ef4444', '#f4511e', '#fb6200', '#f98b00', '#f2b000', '#eab308', '#d0c400', '#a4d400', '#6edf00', '#22c55e'];
                     return <Path key={`seg-${startPct}`} d={arcPath(126, startPct, endPct)} fill="none" stroke={colors[idx]} strokeLinecap="butt" strokeWidth={12} />;
-                  })}
-                  {Array.from({ length: 41 }, (_, i) => i * 2.5).map((mark) => {
-                    const angle = angleForPct(mark);
-                    if (mark <= 7.5 || mark >= 92.5) {
-                      return null;
-                    }
-                    const major = mark % 10 === 0;
-                    const x1 = centerX + Math.cos(angle) * 106;
-                    const y1 = centerY - Math.sin(angle) * 106;
-                    const tickLength = major ? 12 : 6;
-                    const x2 = centerX + Math.cos(angle) * (106 + tickLength);
-                    const y2 = centerY - Math.sin(angle) * (106 + tickLength);
+              })}
+              {Array.from({ length: 41 }, (_, i) => i * 2.5).map((mark) => {
+                const angle = angleForPct(mark);
+                if (mark <= 7.5 || mark >= 92.5) {
+                  return null;
+                }
+                const major = mark % 10 === 0;
+                const x1 = centerX + Math.cos(angle) * 106;
+                const y1 = centerY - Math.sin(angle) * 106;
+                const tickLength = major ? 12 : 6;
+                const x2 = centerX + Math.cos(angle) * (106 + tickLength);
+                const y2 = centerY - Math.sin(angle) * (106 + tickLength);
                     return <Path key={`tick-${mark}`} d={`M ${x1} ${y1} L ${x2} ${y2}`} fill="none" stroke={major ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.4)'} strokeLinecap="round" strokeWidth={major ? 2.6 : 1.15} />;
-                  })}
-                  <Path d={`M ${tipX} ${tipY} L ${leftX} ${leftY} L ${rightX} ${rightY} Z`} fill="#ffffff" />
+              })}
+              <Path d={`M ${tipX} ${tipY} L ${leftX} ${leftY} L ${rightX} ${rightY} Z`} fill="#ffffff" />
                   <SvgText fill="#f8fafc" fontSize="13" fontWeight="700" x={pointOnArc(118, 0).x + 8} y={pointOnArc(118, 0).y - 10}>0</SvgText>
                   <SvgText fill="#f8fafc" fontSize="13" fontWeight="700" textAnchor="end" x={pointOnArc(118, 100).x - 8} y={pointOnArc(118, 100).y - 10}>100</SvgText>
                 </Svg>
@@ -2016,14 +2376,396 @@ export default function App() {
               <Text style={styles.scoreSub}>{scorePresentation.subtitle}</Text>
             </View>
             <View style={styles.grid}>{dashboardMetrics.map((item) => (<View key={item.label} style={styles.glassCard}><Text style={styles.metricLabel}>{item.label}</Text><View style={styles.metricValueRow}><Text style={styles.metricValue}>{item.value}</Text><Text style={styles.metricUnit}>{item.unit}</Text></View><Text style={[styles.metricStatus, { color: item.statusColor }]}>{item.status}</Text></View>))}</View>
-            <View style={styles.glassCardLarge}><Text style={styles.cardBadge}>NEURAL AI ADVISOR</Text><Text style={styles.cardTitle}>Chan</Text><Text style={styles.cardText}>Glucose high. Need recommendations?</Text><View style={styles.row}><TouchableOpacity style={styles.primaryBtn}><Text style={styles.primaryBtnText}>Suggestions</Text></TouchableOpacity><TouchableOpacity style={styles.secondaryBtn}><Text style={styles.secondaryBtnText}>Not Now</Text></TouchableOpacity></View></View>
-            <View style={[styles.glassCardLarge, styles.foodCard]}><View style={styles.foodCardHeader}><Text style={[styles.cardBadge, { color: '#EAB308' }]}>FOOD SUGGESTION</Text><TouchableOpacity onPress={() => setFoodSuggestionCollapsed((prev) => !prev)} style={styles.foodToggleBtn}><Text style={styles.foodToggleText}>{foodSuggestionCollapsed ? 'Expand' : 'Collapse'}</Text></TouchableOpacity></View>{!foodSuggestionCollapsed ? (<><Text style={styles.cardText}>Orange Chicken is available. Want a healthier option?</Text><TouchableOpacity style={styles.foodBtn}><Text style={styles.foodBtnText}>View Options</Text></TouchableOpacity></>) : null}</View>
-            <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
+            <View style={styles.neuralAdvisorSection}>
+              <View style={styles.neuralAdvisorDivider} />
+              <View style={styles.neuralAdvisorInner}>
+                <Text style={styles.cardBadge}>NEURAL AI ADVISOR</Text>
+                <View style={styles.advisorCardBody}>
+                  <Image fadeDuration={0} resizeMode="contain" source={require('../../assets/chanmoji.png')} style={styles.advisorImage} />
+                  <View
+                    style={styles.advisorContent}
+                    onLayout={(e) => {
+                      const w = Math.floor(e.nativeEvent.layout.width);
+                      if (w > 1 && Math.abs(w - advisorGallerySlideWidth) > 2) {
+                        setAdvisorGallerySlideWidth(w);
+                      }
+                    }}
+                  >
+                    <Text style={styles.cardTitle}>Mr. Chan</Text>
+                    <View
+                      style={styles.neuralAdvisorGalleryShell}
+                      onLayout={(e) => {
+                        const { width, height } = e.nativeEvent.layout;
+                        if (width > 0 && height > 0) {
+                          setAdvisorGalleryShellLayout((prev) =>
+                            prev.w === width && prev.h === height ? prev : { w: width, h: height },
+                          );
+                        }
+                      }}
+                    >
+                      {advisorGalleryShellLayout.w > 48 &&
+                      advisorGalleryShellLayout.h > 0 &&
+                      advisorSlides.length > 0 ? (
+                        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+                          <Svg height={advisorGalleryShellLayout.h} width={advisorGalleryShellLayout.w}>
+                            <Defs>
+                              <LinearGradient id={`${advisorGalleryEdgeGid}-L`} x1="0" y1="0" x2="1" y2="0">
+                                <Stop offset="0" stopColor="#020617" stopOpacity="0.34" />
+                                <Stop offset="0.55" stopColor="#020617" stopOpacity="0.1" />
+                                <Stop offset="1" stopColor="#020617" stopOpacity="0" />
+                              </LinearGradient>
+                              <LinearGradient id={`${advisorGalleryEdgeGid}-R`} x1="1" y1="0" x2="0" y2="0">
+                                <Stop offset="0" stopColor="#020617" stopOpacity="0.34" />
+                                <Stop offset="0.55" stopColor="#020617" stopOpacity="0.1" />
+                                <Stop offset="1" stopColor="#020617" stopOpacity="0" />
+                              </LinearGradient>
+                              <LinearGradient id={`${advisorGalleryEdgeGid}-HL`} x1="0" y1="0" x2="1" y2="0">
+                                <Stop offset="0" stopColor="#f8fafc" stopOpacity="0.07" />
+                                <Stop offset="0.4" stopColor="#f8fafc" stopOpacity="0.02" />
+                                <Stop offset="1" stopColor="#f8fafc" stopOpacity="0" />
+                              </LinearGradient>
+                              <LinearGradient id={`${advisorGalleryEdgeGid}-HR`} x1="1" y1="0" x2="0" y2="0">
+                                <Stop offset="0" stopColor="#f8fafc" stopOpacity="0.07" />
+                                <Stop offset="0.4" stopColor="#f8fafc" stopOpacity="0.02" />
+                                <Stop offset="1" stopColor="#f8fafc" stopOpacity="0" />
+                              </LinearGradient>
+                            </Defs>
+                            <Rect
+                              fill={`url(#${advisorGalleryEdgeGid}-L)`}
+                              height={advisorGalleryShellLayout.h}
+                              opacity={advisorGalleryLeftEdgeOpacity}
+                              width={20}
+                              x={0}
+                              y={0}
+                            />
+                            <Rect
+                              fill={`url(#${advisorGalleryEdgeGid}-HL)`}
+                              height={advisorGalleryShellLayout.h}
+                              opacity={advisorGalleryLeftEdgeOpacity * 0.85}
+                              width={12}
+                              x={0}
+                              y={0}
+                            />
+                            <Rect
+                              fill={`url(#${advisorGalleryEdgeGid}-R)`}
+                              height={advisorGalleryShellLayout.h}
+                              opacity={advisorGalleryRightEdgeOpacity}
+                              width={20}
+                              x={advisorGalleryShellLayout.w - 20}
+                              y={0}
+                            />
+                            <Rect
+                              fill={`url(#${advisorGalleryEdgeGid}-HR)`}
+                              height={advisorGalleryShellLayout.h}
+                              opacity={advisorGalleryRightEdgeOpacity * 0.85}
+                              width={12}
+                              x={advisorGalleryShellLayout.w - 12}
+                              y={0}
+                            />
+            </Svg>
+          </View>
+                      ) : null}
+                      <ScrollView
+                        key={advisorSlideKeySignature}
+                        decelerationRate="fast"
+                        horizontal
+                        nestedScrollEnabled
+                        onMomentumScrollEnd={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+                          const w = advisorGallerySlideWidth;
+                          if (w <= 0) {
+                            return;
+                          }
+                          const x = e.nativeEvent.contentOffset.x;
+                          const next = Math.round(x / w);
+                          const max = Math.max(0, advisorSlides.length - 1);
+                          const clamped = Math.min(Math.max(0, next), max);
+                          setAdvisorGalleryIndex(clamped);
+                          setAdvisorGalleryScrollX(clamped * w);
+                        }}
+                        onScroll={(e) => {
+                          setAdvisorGalleryScrollX(e.nativeEvent.contentOffset.x);
+                        }}
+                        pagingEnabled
+                        removeClippedSubviews={false}
+                        scrollEventThrottle={24}
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.neuralAdvisorGalleryScroll}
+                      >
+                        {advisorSlides.map((slide) => (
+                          <View
+                            key={slide.key}
+            style={[
+                              styles.advisorGallerySlide,
+                              slide.key === 'steady' && styles.advisorGallerySlideSteadyOnly,
+                              { width: advisorGallerySlideWidth },
+                            ]}
+                          >
+          <Text
+            style={[
+                                styles.advisorGallerySlideText,
+                                slide.key === 'steady' && styles.advisorGallerySlideTextSteady,
+            ]}
+          >
+                              {slide.message}
+          </Text>
+                            {slide.key !== 'steady' ? (
+                              <View style={styles.advisorGalleryBtnRow}>
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    const k = slide.key;
+                                    if (k === 'steady') return;
+                                    const req = (advisorSuggestionRequestRef.current += 1);
+                                    setFoodSuggestionKind(k);
+                                    setFoodSuggestionUnlocked(true);
+                                    setFoodSuggestionGenerating(true);
+                                    setFoodSuggestionBody('');
+                                    void generateAdvisorSuggestionBody({
+                                      metric: k,
+                                      stressValue: stressNow,
+                                      glucoseValue: glucoseNow,
+                                      heartRateValue: heartRateNow,
+                                    }).then((result) => {
+                                      if (advisorSuggestionRequestRef.current !== req) {
+                                        return;
+                                      }
+                                      console.log('[Zetic advisor] UI:applied', {
+                                        source: result.source,
+                                        error: result.error,
+                                        bodyChars: result.body.length,
+                                      });
+                                      setFoodSuggestionBody(result.body);
+                                      setFoodSuggestionGenerating(false);
+                                    });
+                                  }}
+                                  style={styles.advisorGalleryPrimaryBtn}
+                                >
+                                  <Text style={styles.advisorGalleryPrimaryBtnText}>Suggestions</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    const k = slide.key as AdvisorAlertSlideKey;
+                                    appendAlertLog({
+                                      level: 'info',
+                                      source: `alert:${k}`,
+                                      message: `${ADVISOR_ALERT_LABEL[k]} alert dismissed (Not now).`,
+                                    });
+                                    setDismissedAdvisorSlideKeys((prev) => ({ ...prev, [slide.key]: true }));
+                                  }}
+                                  style={styles.advisorGallerySecondaryBtn}
+                                >
+                                  <Text style={styles.advisorGallerySecondaryBtnText}>Not Now</Text>
+                                </TouchableOpacity>
+        </View>
+                            ) : null}
+              </View>
+                        ))}
+                      </ScrollView>
+                      {advisorGalleryShellLayout.w > 48 && advisorGalleryShellLayout.h > 0 ? (
+                        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+                          <Svg height={advisorGalleryShellLayout.h} width={advisorGalleryShellLayout.w}>
+                            <Defs>
+                              <LinearGradient id={`${advisorGalleryEdgeGid}-TF-L`} x1="0" y1="0" x2="1" y2="0">
+                                <Stop offset="0" stopColor="#111827" stopOpacity="1" />
+                                <Stop offset="0.38" stopColor="#111827" stopOpacity="0.45" />
+                                <Stop offset="1" stopColor="#111827" stopOpacity="0" />
+                              </LinearGradient>
+                              <LinearGradient id={`${advisorGalleryEdgeGid}-TF-R`} x1="1" y1="0" x2="0" y2="0">
+                                <Stop offset="0" stopColor="#111827" stopOpacity="1" />
+                                <Stop offset="0.38" stopColor="#111827" stopOpacity="0.45" />
+                                <Stop offset="1" stopColor="#111827" stopOpacity="0" />
+                              </LinearGradient>
+                            </Defs>
+                            <Rect
+                              fill={`url(#${advisorGalleryEdgeGid}-TF-L)`}
+                              height={advisorGalleryShellLayout.h}
+                              width={36}
+                              x={0}
+                              y={0}
+                            />
+                            <Rect
+                              fill={`url(#${advisorGalleryEdgeGid}-TF-R)`}
+                              height={advisorGalleryShellLayout.h}
+                              width={36}
+                              x={advisorGalleryShellLayout.w - 36}
+                              y={0}
+                            />
+                          </Svg>
+            </View>
+                      ) : null}
+                    </View>
+                    {advisorSlides.length > 1 ? (
+                      <View style={styles.advisorGalleryPagerDots}>
+                        {advisorSlides.map((slide, idx) => (
+                          <View
+                            key={`advisor-gallery-dot-${slide.key}`}
+                            style={[styles.advisorGalleryPagerDot, idx === advisorGalleryIndex && styles.advisorGalleryPagerDotActive]}
+                          />
+          ))}
+        </View>
+                    ) : null}
+          </View>
+        </View>
+              </View>
+              <View style={styles.neuralAdvisorDivider} />
+            </View>
+            {foodSuggestionUnlocked && foodSuggestionKind ? (
+        <View style={[styles.glassCardLarge, styles.foodCard]}>
+          <View style={styles.foodCardHeader}>
+                  <Text style={[styles.cardBadge, { color: '#EAB308' }]}>
+                    {SUGGESTION_CARD_BY_METRIC[foodSuggestionKind].badge}
+                  </Text>
+                  <TouchableOpacity
+                    accessibilityLabel="Dismiss suggestion"
+                    accessibilityRole="button"
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    onPress={() => {
+                      advisorSuggestionRequestRef.current += 1;
+                      setFoodSuggestionUnlocked(false);
+                      setFoodSuggestionKind(null);
+                      setFoodSuggestionBody('');
+                      setFoodSuggestionGenerating(false);
+                    }}
+                    style={styles.foodToggleBtn}
+                  >
+                    <Text style={styles.foodToggleGlyph}>×</Text>
+            </TouchableOpacity>
+          </View>
+                <View style={styles.foodCardBodyRow}>
+                  <View style={styles.foodCardBodyText}>
+                    {foodSuggestionGenerating ? (
+                      <View style={styles.foodCardGeneratingRow}>
+                        <ActivityIndicator color="#a1a1aa" size="small" />
+                        <Text style={[styles.cardText, styles.foodCardGeneratingLabel]}>
+                          Generating a personalized tip on-edge…
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.cardText}>{foodSuggestionBody}</Text>
+                    )}
+                  </View>
+                  {foodSuggestionGenerating ? null : (
+                    <TouchableOpacity
+                      accessibilityHint="Opens the matching metric in Insights"
+                      accessibilityLabel={`${SUGGESTION_CARD_BY_METRIC[foodSuggestionKind].cta} for ${SUGGESTION_CARD_BY_METRIC[foodSuggestionKind].badge}`}
+                      accessibilityRole="button"
+                      onPress={() => {
+                        setActiveTab('Insights');
+                        setActiveInsightTab(ADVISOR_VIEW_OPTIONS_INSIGHT_TAB[foodSuggestionKind]);
+                      }}
+                      style={styles.foodBtn}
+                    >
+                      <Text style={styles.foodBtnText}>{SUGGESTION_CARD_BY_METRIC[foodSuggestionKind].cta}</Text>
+              </TouchableOpacity>
+                  )}
+        </View>
+              </View>
+            ) : null}
+        <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
             <DashboardQuickActionMetricsRow metrics={dashboardQuickMetrics} onMetricPress={(metric) => { setActiveTab('Insights'); setActiveInsightTab(metric); }} onReorder={setDashboardQuickMetrics} />
             <View style={styles.activityContainer}>{dashboardActivity.map((item, index) => (<View key={item.label} style={styles.activityItem}><View style={styles.activityTopRow}><ActivityMiniIcon label={item.label} /><View style={styles.activityTextStack}><Text style={styles.activityLabel}>{item.label}</Text><Text style={styles.activityValue}>{item.value}</Text></View></View><View style={styles.activityTrack}><View style={[styles.activityFill, { flex: item.fill, backgroundColor: item.color }]} /><View style={[styles.activityTrackRemainder, { flex: 100 - item.fill }]} /></View>{index < dashboardActivity.length - 1 ? <View style={styles.activityDivider} /> : null}</View>))}</View>
           </ScrollView>
         </>
-      )}
+        </View>
+        {activeTab === 'Map' ? (
+          <View collapsable={false} style={[styles.tabStackLayer, { zIndex: 2 }]}>
+            <MapScreen
+              activeMapLayer={activeMapLayer}
+              mapCoords={mapCoords}
+              mapDiscoveryEventsLoading={mapDiscoveryEventsLoading}
+              mapLocationStatus={mapLocationStatus}
+              mapRecommendations={mapRecommendations}
+              mapViewRef={mapViewRef}
+              openEventLinkPrompt={openEventLinkPrompt}
+              recenterMapToCurrentLocation={recenterMapToCurrentLocation}
+              setActiveMapLayer={setActiveMapLayer}
+            />
+          </View>
+        ) : null}
+        {activeTab === 'Insights' ? (
+          <View collapsable={false} style={[styles.tabStackLayer, { zIndex: 2 }]}>
+            <InsightsScreen
+              activeInsightTab={activeInsightTab}
+              dashboardQuickMetrics={dashboardQuickMetrics}
+              expandedInsightGroups={expandedInsightGroups}
+              filteredQuickMetricOptions={filteredQuickMetricOptions}
+              healthKitLastError={healthKitLastError}
+              healthKitLoading={healthKitLoading}
+              healthKitStatus={healthKitStatus}
+              initHealthKitAsync={initHealthKitAsync}
+              insightContentByTab={insightContentByTab}
+              insightTrendWindow={insightTrendWindow}
+              insightsGalleryScrollPages={insightsGalleryScrollPages}
+              onInsightsGalleryMomentumEnd={onInsightsGalleryMomentumEnd}
+              onInsightsGalleryScroll={onInsightsGalleryScroll}
+              onInsightTrendWindowChange={(next: InsightTrendWindow) => {
+                setInsightTrendWindow(next);
+                if (healthKitStatus === 'ready' && !healthKitLoading) {
+                  void initHealthKitAsync(next);
+                }
+              }}
+              quickMetricSearchQuery={quickMetricSearchQuery}
+              selectedInsightContent={selectedInsightContent}
+              setActiveInsightTab={setActiveInsightTab}
+              setExpandedInsightGroups={setExpandedInsightGroups}
+              setHealthKitStatus={setHealthKitStatus}
+              setQuickMetricSearchQuery={setQuickMetricSearchQuery}
+              setStarredGalleryIndex={setStarredGalleryIndex}
+              starredGalleryIndex={starredGalleryIndex}
+              starredGalleryPageWidth={starredGalleryPageWidth}
+              starredGalleryScrollRef={starredGalleryScrollRef}
+              starredGallerySuppressAutoUntilRef={starredGallerySuppressAutoUntilRef}
+              starredGalleryUserDraggingRef={starredGalleryUserDraggingRef}
+              suppressStarredGalleryLayoutScrollRef={suppressStarredGalleryLayoutScrollRef}
+              toggleDashboardQuickMetric={toggleDashboardQuickMetric}
+            />
+                </View>
+        ) : null}
+        {activeTab === 'Goals' ? (
+          <View collapsable={false} style={[styles.tabStackLayer, { zIndex: 2 }]}>
+            <GoalsScreen
+              challengeFilter={challengeFilter}
+              communitySearchQuery={communitySearchQuery}
+              displayedEvents={displayedEvents}
+              eventsTab={eventsTab}
+              filteredChallenges={filteredChallenges}
+              filteredCommunities={filteredCommunities}
+              goalsTab={goalsTab}
+              inviteContactBySms={inviteContactBySms}
+              inviteContacts={inviteContacts}
+              isInteractingWithEventsList={isInteractingWithEventsList}
+              joinedCommunities={joinedCommunities}
+              joinedCommunityNames={joinedCommunityNames}
+              loadingCommunityEvents={loadingCommunityEvents}
+              loadingInviteContacts={loadingInviteContacts}
+              openCreateProgressPostModal={openCreateProgressPostModal}
+              openEventLinkPrompt={openEventLinkPrompt}
+              openInviteContacts={openInviteContacts}
+              progressPostsForSelectedCommunity={progressPostsForSelectedCommunity}
+              selectedCommunityAction={selectedCommunityAction}
+              selectedCommunityShareLink={selectedCommunityShareLink}
+              selectedJoinedCommunity={selectedJoinedCommunity}
+              setChallengeFilter={setChallengeFilter}
+              setCommunitySearchQuery={setCommunitySearchQuery}
+              setEventsTab={setEventsTab}
+              setGoalsTab={setGoalsTab}
+              setIsInteractingWithEventsList={setIsInteractingWithEventsList}
+              setJoinedCommunityNames={setJoinedCommunityNames}
+              setSelectedCommunityAction={setSelectedCommunityAction}
+              setSelectedJoinedCommunityName={setSelectedJoinedCommunityName}
+              setShowCreatePersonalChallengeModal={setShowCreatePersonalChallengeModal}
+              setShowInvitePopup={setShowInvitePopup}
+              setShowOverviewPopup={setShowOverviewPopup}
+              showInvitePopup={showInvitePopup}
+              showOverviewPopup={showOverviewPopup}
+            />
+              </View>
+        ) : null}
+        {activeTab === 'Alert logs' ? (
+          <View collapsable={false} style={[styles.tabStackLayer, { zIndex: 2 }]}>
+            <LogsScreen events={alertEventLog} />
+          </View>
+        ) : null}
+            </View>
 
       <View style={styles.bottomNav}>
         <Svg pointerEvents="none" style={styles.navDividerSvg} viewBox="0 0 390 18">
@@ -2168,7 +2910,7 @@ export default function App() {
           <View style={styles.alertsModalCard}>
             <View style={styles.alertsModalHeader}>
               <TouchableOpacity onPress={() => setShowAlertsScreen(false)} style={styles.alertsBackBtn}>
-                <Text style={styles.alertsBackText}>{'<'}</Text>
+                <Ionicons name="chevron-back" size={20} color="#f8fafc" />
               </TouchableOpacity>
               <View style={styles.alertsHeaderTextWrap}>
                 <Text style={styles.alertsTitle}>Alerts</Text>
@@ -2194,6 +2936,15 @@ export default function App() {
         </View>
       </Modal>
 
+      <Modal
+        animationType="slide"
+        transparent
+        visible={showProfileScreen}
+        onRequestClose={() => setShowProfileScreen(false)}
+      >
+        <ProfileShowcaseScreen onClose={() => setShowProfileScreen(false)} />
+      </Modal>
+
       {sidebarOpen ? (
         <View style={styles.sidebarOverlay}>
           <View style={styles.sidebarPanel}>
@@ -2203,7 +2954,13 @@ export default function App() {
                 <Text style={styles.sidebarClose}>×</Text>
               </TouchableOpacity>
             </View>
-            <TouchableOpacity style={styles.sidebarItem}>
+            <TouchableOpacity
+              style={styles.sidebarItem}
+              onPress={() => {
+                setSidebarOpen(false);
+                setShowProfileScreen(true);
+              }}
+            >
               <Text style={styles.sidebarItemText}>Profile</Text>
             </TouchableOpacity>
             <View style={styles.sidebarDivider} />

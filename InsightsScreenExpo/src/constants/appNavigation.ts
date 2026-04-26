@@ -8,7 +8,7 @@ export const ACTIVITY = [
 export const NAV_ITEMS = [
   { label: 'Dashboard', icon: '◉' },
   { label: 'Insights', icon: '◌' },
-  { label: 'Resources', icon: '▤' },
+  { label: 'Alert logs', icon: '≡' },
   { label: 'Map', icon: '⌖' },
   { label: 'Goals', icon: '◎' },
 ];

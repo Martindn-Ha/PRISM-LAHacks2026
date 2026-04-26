@@ -1,0 +1,46 @@
+require('dotenv/config');
+
+module.exports = {
+  expo: {
+    plugins: ['./plugins/withStripIosPushEntitlement.js'],
+    name: 'PRISM',
+    slug: 'prism',
+    version: '1.0.0',
+    orientation: 'portrait',
+    icon: './assets/icon.png',
+    userInterfaceStyle: 'light',
+    newArchEnabled: true,
+    splash: {
+      image: './assets/splash-icon.png',
+      resizeMode: 'contain',
+      backgroundColor: '#ffffff',
+    },
+    ios: {
+      supportsTablet: true,
+      bundleIdentifier: 'com.martindnha.InsightsScreenExpo',
+      entitlements: {
+        'com.apple.developer.healthkit': true,
+      },
+      infoPlist: {
+        CFBundleDisplayName: 'PRISM',
+        NSHealthShareUsageDescription: 'PRISM reads your Apple Health data to show personalized insights.',
+        NSHealthUpdateUsageDescription: 'PRISM may write selected wellness updates to Apple Health.',
+        ZeticModelName: 'changgeun/gemma-4-E2B-it',
+        ZeticModelVersion: 1,
+        ZeticPersonalKey: process.env.EXPO_PUBLIC_ZETIC_PERSONAL_KEY ?? '',
+      },
+    },
+    android: {
+      adaptiveIcon: {
+        foregroundImage: './assets/adaptive-icon.png',
+        backgroundColor: '#ffffff',
+      },
+      edgeToEdgeEnabled: true,
+      predictiveBackGestureEnabled: false,
+      package: 'com.martindnha.InsightsScreenExpo',
+    },
+    web: {
+      favicon: './assets/favicon.png',
+    },
+  },
+};
