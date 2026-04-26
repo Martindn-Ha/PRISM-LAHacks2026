@@ -69,9 +69,11 @@ EVENTBRITE_PRIVATE_TOKEN=
 GOOGLE_MAPS_API_KEY=
 ```
 
-## Local App Run (iOS dev client)
+## Local app run (dev client on a device)
 
-From `InsightsScreenExpo/`:
+`npx expo prebuild` generates **native** projects under `ios/` and `android/` (not web-only). After you add or change native modules, run prebuild (or clean/regenerate those folders) so the native projects match `app.json` and your dependencies.
+
+From `InsightsScreenExpo/`, iOS dev client on a **connected physical device** (`--device`):
 
 ```bash
 npx expo prebuild
@@ -85,6 +87,8 @@ In a second terminal:
 cd "/Users/adminpersonberg/Desktop/LAHacks2026/InsightsScreenExpo"
 npx expo run:ios --device --no-bundler
 ```
+
+For a **physical Android device**, use `npx expo run:android --device` (after prebuild; use Gradle from `android/` as needed) instead of the `run:ios` line.
 
 ## Deploy Backend Functions
 

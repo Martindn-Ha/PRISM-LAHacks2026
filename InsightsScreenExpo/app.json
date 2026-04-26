@@ -1,5 +1,6 @@
 {
   "expo": {
+    "plugins": ["./plugins/withStripIosPushEntitlement.js"],
     "name": "InsightsScreenExpo",
     "slug": "InsightsScreenExpo",
     "version": "1.0.0",
