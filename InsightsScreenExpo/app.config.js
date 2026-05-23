@@ -9,25 +9,24 @@ module.exports = {
     orientation: 'portrait',
     icon: './assets/icon.png',
     userInterfaceStyle: 'light',
-    newArchEnabled: true,
     splash: {
-      image: './assets/splash-icon.png',
+      image: './assets/PRISM.png',
       resizeMode: 'contain',
       backgroundColor: '#ffffff',
     },
     ios: {
       supportsTablet: true,
       bundleIdentifier: 'com.martindnha.InsightsScreenExpo',
+      buildNumber: '1',
       entitlements: {
         'com.apple.developer.healthkit': true,
       },
       infoPlist: {
+        /** Declares standard/exempt-only crypto so App Store Connect usually skips per-build export questions. */
+        ITSAppUsesNonExemptEncryption: false,
         CFBundleDisplayName: 'PRISM',
         NSHealthShareUsageDescription: 'PRISM reads your Apple Health data to show personalized insights.',
         NSHealthUpdateUsageDescription: 'PRISM may write selected wellness updates to Apple Health.',
-        ZeticModelName: 'changgeun/gemma-4-E2B-it',
-        ZeticModelVersion: 1,
-        ZeticPersonalKey: process.env.EXPO_PUBLIC_ZETIC_PERSONAL_KEY ?? '',
       },
     },
     android: {
@@ -41,6 +40,11 @@ module.exports = {
     },
     web: {
       favicon: './assets/favicon.png',
+    },
+    extra: {
+      eas: {
+        projectId: '17875af3-526d-43d8-aac5-fdaf6489499a',
+      },
     },
   },
 };

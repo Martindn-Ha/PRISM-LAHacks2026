@@ -1,7 +1,12 @@
 import { ScrollView, Text, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
-import type { InsightContent, InsightTab } from '../../constants/insights';
-import { buildDenseAxisTickIndices, formatTrendPointValue } from '../../lib/insightChartAxis';
+import { insightTabLabel, type InsightContent, type InsightTab } from '../../constants/insights';
+import {
+  alignTrendLabelsForPoints,
+  buildDenseAxisTickIndices,
+  formatTrendPointValue,
+  sanitizeInsightTrendPoints,
+} from '../../lib/insightChartAxis';
 
 type Props = {
   metric: InsightTab;
@@ -12,8 +17,8 @@ type Props = {
 };
 
 export function InsightsFavoriteSparkPage({ metric, content, pageWidth, theme, iconGlyph }: Props) {
-  const points = content.trendPoints ?? [0, 0, 0, 0, 0, 0, 0];
-  const labels = content.trendLabels ?? ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  const points = sanitizeInsightTrendPoints(content.trendPoints);
+  const labels = alignTrendLabelsForPoints(points.length, content.trendLabels ?? null);
   const n = points.length;
   const graphPaddingX = 10;
   const graphPaddingY = 12;
@@ -72,12 +77,16 @@ export function InsightsFavoriteSparkPage({ metric, content, pageWidth, theme, i
 
   const labelsRow = dense ? (
     <>
-      <Text style={{ color: '#64748b', fontSize: 10, fontWeight: '600', marginTop: 4 }}>
+      <Text style={{ color: '#64748b', fontSize: 12, fontWeight: '600', marginTop: 4 }}>
         {`Low ${formatTrendPointValue(Math.min(...points))} · High ${formatTrendPointValue(Math.max(...points))}`}
       </Text>
       <View style={{ position: 'relative', height: 44, width: chartWidth, marginTop: 2 }}>
         {axisTickIndices.map((idx) => {
-          const cx = coords[idx].x;
+          const pt = coords[idx];
+          if (!pt || !Number.isFinite(pt.x)) {
+            return null;
+          }
+          const cx = pt.x;
           const labelW = 50;
           const left = Math.min(chartWidth - labelW, Math.max(0, Math.round(cx - labelW / 2)));
           return (
@@ -85,10 +94,10 @@ export function InsightsFavoriteSparkPage({ metric, content, pageWidth, theme, i
               key={`${metric}-spark-axis-${idx}`}
               style={{ position: 'absolute', left, top: 0, width: labelW, alignItems: 'center' }}
             >
-              <Text style={{ color: '#e2e8f0', fontSize: 10, fontWeight: '800' }} numberOfLines={1}>
+              <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '800' }} numberOfLines={1}>
                 {formatTrendPointValue(points[idx])}
               </Text>
-              <Text style={{ color: '#94a3b8', fontSize: 9, fontWeight: '700', marginTop: 2 }} numberOfLines={1}>
+              <Text style={{ color: '#94a3b8', fontSize: 11, fontWeight: '700', marginTop: 2 }} numberOfLines={1}>
                 {labels[idx]}
               </Text>
             </View>
@@ -100,10 +109,10 @@ export function InsightsFavoriteSparkPage({ metric, content, pageWidth, theme, i
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
       {labels.map((label, idx) => (
         <View key={`${metric}-spark-lbl-${idx}`} style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={{ color: '#e2e8f0', fontSize: 10, fontWeight: '800' }}>
+          <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '800' }}>
             {formatTrendPointValue(points[idx])}
           </Text>
-          <Text style={{ color: '#64748b', fontSize: 9, fontWeight: '700', marginTop: 2 }}>
+          <Text style={{ color: '#64748b', fontSize: 11, fontWeight: '700', marginTop: 2 }}>
             {label}
           </Text>
         </View>
@@ -121,12 +130,12 @@ export function InsightsFavoriteSparkPage({ metric, content, pageWidth, theme, i
   return (
     <View style={{ width: pageWidth, paddingVertical: 4 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-        <Text style={{ fontSize: 22, color: theme }}>{iconGlyph}</Text>
+        <Text style={{ fontSize: 26, color: theme }}>{iconGlyph}</Text>
         <View style={{ flex: 1 }}>
-          <Text style={{ color: '#93c5fd', fontSize: 10, fontWeight: '800', letterSpacing: 1 }}>FAVORITE</Text>
-          <Text style={{ color: '#f8fafc', fontSize: 16, fontWeight: '800', letterSpacing: -0.2 }}>{metric}</Text>
+          <Text style={{ color: '#93c5fd', fontSize: 12, fontWeight: '800', letterSpacing: 1 }}>FAVORITE</Text>
+          <Text style={{ color: '#f8fafc', fontSize: 19, fontWeight: '800', letterSpacing: -0.2 }}>{insightTabLabel(metric)}</Text>
         </View>
-        <Text style={{ color: '#94a3b8', fontSize: 11, fontWeight: '700' }}>{content.trendUnit}</Text>
+        <Text style={{ color: '#94a3b8', fontSize: 13, fontWeight: '700' }}>{content.trendUnit}</Text>
       </View>
       {needsScroll ? (
         <ScrollView

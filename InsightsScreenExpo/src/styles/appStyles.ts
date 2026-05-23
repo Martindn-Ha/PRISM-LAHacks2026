@@ -42,19 +42,26 @@ export const styles = StyleSheet.create({
     paddingBottom: 20,
     backgroundColor: '#111827',
   },
+  /** Logs / alert timeline embedded in the home alert modal (no duplicate outer padding). */
+  resourcesScreenModalEmbed: {
+    paddingTop: 0,
+    paddingHorizontal: 0,
+    paddingBottom: 0,
+    backgroundColor: 'transparent',
+  },
   resourcesTitle: {
     color: '#f8fafc',
-    fontSize: 24,
+    fontSize: 29,
     fontWeight: '800',
     letterSpacing: -0.2,
   },
   resourcesSubtitle: {
     color: '#94a3b8',
-    fontSize: 12,
+    fontSize: 14,
     marginTop: 6,
     marginBottom: 4,
     fontWeight: '600',
-    lineHeight: 17,
+    lineHeight: 20,
   },
   resourcesScroll: {
     flex: 1,
@@ -71,22 +78,22 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   resourcesTag: {
-    fontSize: 9,
+    fontSize: 11,
     letterSpacing: 0.85,
     fontWeight: '700',
     marginBottom: 6,
   },
   resourcesCardTitle: {
     color: '#f1f5f9',
-    fontSize: 16,
+    fontSize: 19,
     fontWeight: '700',
     letterSpacing: -0.2,
     marginBottom: 6,
   },
   resourcesCardBody: {
     color: '#cbd5e1',
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 16,
+    lineHeight: 23,
     fontWeight: '500',
   },
   logEventCard: {
@@ -100,17 +107,17 @@ export const styles = StyleSheet.create({
   },
   logEventTime: {
     color: '#64748b',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '600',
   },
   logEventLevel: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.5,
   },
   logEventSource: {
     color: '#94a3b8',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
@@ -118,12 +125,12 @@ export const styles = StyleSheet.create({
   },
   mapTitle: {
     color: '#f8fafc',
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: '700',
   },
   mapSubtitle: {
     color: '#9ca3af',
-    fontSize: 12,
+    fontSize: 14,
     marginTop: 4,
     marginBottom: 12,
   },
@@ -148,7 +155,7 @@ export const styles = StyleSheet.create({
   },
   mapLayerChipText: {
     color: '#cbd5e1',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '600',
   },
   mapLayerChipTextActive: {
@@ -177,7 +184,7 @@ export const styles = StyleSheet.create({
   },
   mapRecenterBtnText: {
     color: '#bfdbfe',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   mapFallbackCard: {
@@ -189,7 +196,7 @@ export const styles = StyleSheet.create({
   },
   mapFallbackText: {
     color: '#cbd5e1',
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '600',
   },
   insightsScreen: {
@@ -201,7 +208,7 @@ export const styles = StyleSheet.create({
   },
   insightsTitle: {
     color: '#f8fafc',
-    fontSize: 24,
+    fontSize: 29,
     fontWeight: '800',
     letterSpacing: -0.3,
   },
@@ -214,8 +221,8 @@ export const styles = StyleSheet.create({
   insightsHealthTagline: {
     flex: 1,
     color: '#94a3b8',
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 17,
+    lineHeight: 24,
     fontWeight: '500',
   },
   insightsHealthTaglineConnected: {
@@ -228,7 +235,7 @@ export const styles = StyleSheet.create({
   },
   insightsTrendWindowLabel: {
     color: '#94a3b8',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.9,
     marginBottom: 8,
@@ -253,7 +260,7 @@ export const styles = StyleSheet.create({
   },
   insightsTrendWindowChipText: {
     color: '#94a3b8',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   insightsTrendWindowChipTextActive: {
@@ -265,8 +272,8 @@ export const styles = StyleSheet.create({
   },
   insightsStarredGalleryEmptyText: {
     color: '#94a3b8',
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 16,
+    lineHeight: 23,
     fontWeight: '600',
     textAlign: 'center',
     marginTop: 4,
@@ -293,7 +300,7 @@ export const styles = StyleSheet.create({
     marginTop: 18,
     marginBottom: 8,
     color: '#e2e8f0',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '800',
     letterSpacing: 1.1,
     textTransform: 'uppercase',
@@ -324,13 +331,13 @@ export const styles = StyleSheet.create({
   },
   healthConnectBtnText: {
     color: '#bfdbfe',
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '800',
   },
   healthErrorText: {
     color: '#fca5a5',
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 14,
+    lineHeight: 20,
     marginTop: 8,
     fontWeight: '600',
   },
@@ -343,7 +350,7 @@ export const styles = StyleSheet.create({
   },
   insightsLlmRegenerateText: {
     color: '#93c5fd',
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '700',
   },
   quickMetricSearchInput: {
@@ -354,7 +361,7 @@ export const styles = StyleSheet.create({
     color: '#e2e8f0',
     paddingHorizontal: 12,
     paddingVertical: 10,
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '600',
   },
   quickMetricSearchResults: {
@@ -398,7 +405,7 @@ export const styles = StyleSheet.create({
   quickMetricOptionText: {
     width: '100%',
     color: '#cbd5e1',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',
     minWidth: 0,
@@ -448,20 +455,20 @@ export const styles = StyleSheet.create({
   },
   insightsGroupTitle: {
     color: '#e2e8f0',
-    fontSize: 16,
+    fontSize: 19,
     fontWeight: '700',
   },
   insightsGroupSubtitle: {
     color: '#94a3b8',
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 14,
+    lineHeight: 19,
     marginTop: 2,
     fontWeight: '600',
   },
   insightsGroupChevron: {
     color: '#93c5fd',
-    fontSize: 18,
-    lineHeight: 18,
+    fontSize: 22,
+    lineHeight: 22,
     fontWeight: '700',
   },
   insightsGroupBody: {
@@ -521,8 +528,8 @@ export const styles = StyleSheet.create({
   },
   insightsTabStarText: {
     color: '#fcd34d',
-    fontSize: 17,
-    lineHeight: 17,
+    fontSize: 20,
+    lineHeight: 20,
     fontWeight: '700',
   },
   insightsTabActive: {
@@ -531,7 +538,7 @@ export const styles = StyleSheet.create({
   },
   insightsTabText: {
     color: '#cbd5e1',
-    fontSize: 17,
+    fontSize: 20,
     fontWeight: '700',
   },
   insightsTabTextActive: {
@@ -547,7 +554,7 @@ export const styles = StyleSheet.create({
   },
   insightsCardEyebrow: {
     color: '#93c5fd',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '800',
     letterSpacing: 1,
     textTransform: 'uppercase',
@@ -555,20 +562,20 @@ export const styles = StyleSheet.create({
   },
   insightsCardTitle: {
     color: '#f8fafc',
-    fontSize: 17,
+    fontSize: 20,
     fontWeight: '800',
     letterSpacing: -0.2,
   },
   insightsCardSection: {
     color: '#93c5fd',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
     marginBottom: 6,
   },
   insightsCardSummary: {
     color: '#cbd5e1',
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 17,
+    lineHeight: 24,
     marginTop: 8,
   },
   insightsChartHeader: {
@@ -578,7 +585,7 @@ export const styles = StyleSheet.create({
   },
   insightsChartUnit: {
     color: '#94a3b8',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
   },
   insightsLineChartWrap: {
@@ -593,7 +600,7 @@ export const styles = StyleSheet.create({
   },
   insightsLineChartRangeLegend: {
     color: '#94a3b8',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '600',
     marginTop: 8,
     marginBottom: 2,
@@ -613,12 +620,12 @@ export const styles = StyleSheet.create({
   },
   insightsLineChartAxisValue: {
     color: '#e2e8f0',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '800',
   },
   insightsLineChartAxisDate: {
     color: '#cbd5e1',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
     marginTop: 3,
   },
@@ -643,21 +650,21 @@ export const styles = StyleSheet.create({
   },
   insightsChartValue: {
     color: '#e2e8f0',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '800',
   },
   insightsChartLabel: {
     color: '#94a3b8',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
     marginTop: 2,
   },
   insightsChartValueDense: {
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: '700',
   },
   insightsChartLabelDense: {
-    fontSize: 8,
+    fontSize: 10,
     fontWeight: '700',
     marginTop: 1,
   },
@@ -670,8 +677,8 @@ export const styles = StyleSheet.create({
   },
   insightsPromptText: {
     color: '#9ca3af',
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 16,
+    lineHeight: 22,
     fontWeight: '600',
   },
   insightsDetailScreen: {
@@ -696,15 +703,15 @@ export const styles = StyleSheet.create({
   },
   insightsDetailOverviewTitle: {
     color: '#f8fafc',
-    fontSize: 17,
+    fontSize: 20,
     fontWeight: '800',
     letterSpacing: -0.2,
     marginTop: 6,
   },
   insightsDetailOverviewSummary: {
     color: '#cbd5e1',
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 17,
+    lineHeight: 24,
     marginTop: 8,
   },
   insightsDetailLlmSection: {
@@ -734,7 +741,7 @@ export const styles = StyleSheet.create({
   },
   insightsDetailSubtitle: {
     color: '#94a3b8',
-    fontSize: 12,
+    fontSize: 14,
     marginTop: 4,
     fontWeight: '600',
   },
@@ -747,13 +754,13 @@ export const styles = StyleSheet.create({
   },
   goalsTitle: {
     color: '#f8fafc',
-    fontSize: 24,
+    fontSize: 29,
     fontWeight: '800',
     letterSpacing: 0.2,
   },
   goalsSubtitle: {
     color: '#94a3b8',
-    fontSize: 12,
+    fontSize: 14,
     marginTop: 4,
     fontWeight: '600',
   },
@@ -778,7 +785,7 @@ export const styles = StyleSheet.create({
   },
   goalsTabText: {
     color: '#a3b2c8',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   goalsTabTextActive: {
@@ -822,7 +829,7 @@ export const styles = StyleSheet.create({
     marginBottom: 8,
   },
   challengeTypeBadge: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -866,7 +873,7 @@ export const styles = StyleSheet.create({
   },
   challengeFilterText: {
     color: '#9fb0c7',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   challengeFilterTextActive: {
@@ -883,17 +890,17 @@ export const styles = StyleSheet.create({
   },
   challengeSummaryTitle: {
     color: '#dbeafe',
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '700',
   },
   challengeSummaryText: {
     color: '#a8b6cc',
-    fontSize: 11,
+    fontSize: 13,
     marginTop: 4,
   },
   challengeMembersPill: {
     color: '#dbeafe',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
     borderWidth: 1,
     borderColor: 'rgba(96,165,250,0.35)',
@@ -922,7 +929,7 @@ export const styles = StyleSheet.create({
   },
   challengeChipText: {
     color: '#dbeafe',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
   },
   createPersonalChallengeBtn: {
@@ -936,7 +943,7 @@ export const styles = StyleSheet.create({
   },
   createPersonalChallengeBtnText: {
     color: '#d1fae5',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   challengeModalBackdrop: {
@@ -957,12 +964,12 @@ export const styles = StyleSheet.create({
   },
   challengeModalTitle: {
     color: '#f8fafc',
-    fontSize: 16,
+    fontSize: 19,
     fontWeight: '700',
   },
   challengeModalHint: {
     color: '#94a3b8',
-    fontSize: 12,
+    fontSize: 14,
     marginTop: 4,
     marginBottom: 10,
   },
@@ -973,7 +980,7 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 9,
     color: '#e2e8f0',
-    fontSize: 13,
+    fontSize: 16,
     marginBottom: 10,
     backgroundColor: 'rgba(2,6,23,0.4)',
   },
@@ -995,7 +1002,7 @@ export const styles = StyleSheet.create({
   },
   challengeModalCancelText: {
     color: '#cbd5e1',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   challengeModalCreateBtn: {
@@ -1008,23 +1015,23 @@ export const styles = StyleSheet.create({
   },
   challengeModalCreateText: {
     color: '#d1fae5',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   goalsCardTitle: {
     color: '#f1f5f9',
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: '700',
   },
   goalsCardDetail: {
     color: '#94a3b8',
-    fontSize: 12,
+    fontSize: 14,
     marginTop: 4,
-    lineHeight: 17,
+    lineHeight: 20,
   },
   goalsCardMeta: {
     color: '#9ccfc7',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
     marginTop: 8,
   },
@@ -1048,7 +1055,7 @@ export const styles = StyleSheet.create({
   },
   challengeProgressLabel: {
     color: '#bfdbfe',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
     minWidth: 30,
     textAlign: 'right',
@@ -1069,7 +1076,7 @@ export const styles = StyleSheet.create({
   },
   challengeQuickActionText: {
     color: '#dbeafe',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
   },
   challengeDetailBackdrop: {
@@ -1093,7 +1100,7 @@ export const styles = StyleSheet.create({
   },
   challengeDetailTitle: {
     color: '#e2e8f0',
-    fontSize: 16,
+    fontSize: 19,
     fontWeight: '700',
   },
   challengeDetailCloseBtn: {
@@ -1107,8 +1114,8 @@ export const styles = StyleSheet.create({
   },
   challengeDetailCloseText: {
     color: '#cbd5e1',
-    fontSize: 18,
-    lineHeight: 20,
+    fontSize: 22,
+    lineHeight: 24,
   },
   challengeDetailChips: {
     flexDirection: 'row',
@@ -1117,13 +1124,13 @@ export const styles = StyleSheet.create({
   },
   challengeDetailName: {
     color: '#f8fafc',
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: '700',
   },
   challengeDetailText: {
     color: '#94a3b8',
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 14,
+    lineHeight: 22,
     marginTop: 6,
     marginBottom: 8,
   },
@@ -1142,7 +1149,7 @@ export const styles = StyleSheet.create({
   },
   challengeDetailDismissText: {
     color: '#cbd5e1',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   challengeDetailPrimaryBtn: {
@@ -1155,7 +1162,7 @@ export const styles = StyleSheet.create({
   },
   challengeDetailPrimaryText: {
     color: '#dbeafe',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   challengeTimelineRow: {
@@ -1209,12 +1216,12 @@ export const styles = StyleSheet.create({
   },
   communitySearchText: {
     color: '#6b7280',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
   },
   communitySectionTitle: {
     color: '#f8fafc',
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '700',
     marginBottom: 12,
   },
@@ -1256,13 +1263,13 @@ export const styles = StyleSheet.create({
   },
   communityCardTitle: {
     color: '#f8fafc',
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: '700',
-    lineHeight: 24,
+    lineHeight: 29,
   },
   communityCardMeta: {
     color: '#cbd5e1',
-    fontSize: 11,
+    fontSize: 13,
     marginTop: 4,
   },
   communityJoinBtn: {
@@ -1281,7 +1288,7 @@ export const styles = StyleSheet.create({
   },
   communityJoinText: {
     color: '#0f2a22',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '800',
   },
   communityJoinTextJoined: {
@@ -1322,12 +1329,12 @@ export const styles = StyleSheet.create({
   },
   communityHeroIconText: {
     color: '#f8fafc',
-    fontSize: 16,
+    fontSize: 19,
     fontWeight: '800',
   },
   communityHeroTag: {
     color: '#d1fae5',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
@@ -1358,7 +1365,7 @@ export const styles = StyleSheet.create({
   },
   communitySettingsMenuRowText: {
     color: '#fca5a5',
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: '600',
   },
   communityDetailCard: {
@@ -1371,19 +1378,19 @@ export const styles = StyleSheet.create({
   },
   communityDetailTitle: {
     color: '#f8fafc',
-    fontSize: 28,
-    lineHeight: 32,
+    fontSize: 34,
+    lineHeight: 38,
     fontWeight: '800',
   },
   communityDetailMeta: {
     color: '#d1d5db',
-    fontSize: 14,
+    fontSize: 17,
     marginTop: 6,
     fontWeight: '600',
   },
   communityDetailSub: {
     color: '#cbd5e1',
-    fontSize: 14,
+    fontSize: 17,
     marginTop: 8,
     marginBottom: 12,
   },
@@ -1412,12 +1419,12 @@ export const styles = StyleSheet.create({
   },
   communityActionIcon: {
     color: '#f8fafc',
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '700',
   },
   communityActionLabel: {
     color: '#cbd5e1',
-    fontSize: 10,
+    fontSize: 12,
     textAlign: 'center',
     marginTop: 6,
     fontWeight: '600',
@@ -1446,7 +1453,7 @@ export const styles = StyleSheet.create({
   },
   communityOverviewPopupTitle: {
     color: '#d1fae5',
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: '800',
   },
   communityOverviewCloseBtn: {
@@ -1460,14 +1467,14 @@ export const styles = StyleSheet.create({
   },
   communityOverviewCloseText: {
     color: '#e2e8f0',
-    fontSize: 16,
-    lineHeight: 18,
+    fontSize: 19,
+    lineHeight: 22,
     fontWeight: '700',
   },
   communityOverviewPopupText: {
     color: '#dbe7e3',
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 14,
+    lineHeight: 22,
   },
   inviteContactsList: {
     maxHeight: 320,
@@ -1486,12 +1493,12 @@ export const styles = StyleSheet.create({
   },
   inviteContactName: {
     color: '#f8fafc',
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '700',
   },
   inviteContactPhone: {
     color: '#9ca3af',
-    fontSize: 11,
+    fontSize: 13,
     marginTop: 2,
   },
   inviteContactBtn: {
@@ -1502,12 +1509,12 @@ export const styles = StyleSheet.create({
   },
   inviteContactBtnText: {
     color: '#0f2a22',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '800',
   },
   progressBoardTitle: {
     color: '#f8fafc',
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: '800',
     marginTop: 4,
   },
@@ -1527,7 +1534,7 @@ export const styles = StyleSheet.create({
   },
   createPostBtnText: {
     color: '#d1fae5',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '800',
   },
   eventsTabRow: {
@@ -1550,7 +1557,7 @@ export const styles = StyleSheet.create({
   },
   eventsTabText: {
     color: '#9ca3af',
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '700',
   },
   eventsTabTextActive: {
@@ -1568,14 +1575,14 @@ export const styles = StyleSheet.create({
   },
   eventsLoadingText: {
     color: '#93c5fd',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
     paddingTop: 6,
     paddingBottom: 2,
   },
   eventsEmptyText: {
     color: '#94a3b8',
-    fontSize: 13,
+    fontSize: 16,
     textAlign: 'center',
     paddingTop: 18,
   },
@@ -1602,20 +1609,20 @@ export const styles = StyleSheet.create({
   },
   eventDateMonth: {
     color: '#e5e7eb',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
     textTransform: 'uppercase',
   },
   eventDateDay: {
     color: '#f8fafc',
-    fontSize: 26,
-    lineHeight: 30,
+    fontSize: 31,
+    lineHeight: 36,
     fontWeight: '800',
     marginVertical: 1,
   },
   eventDateDow: {
     color: '#9ca3af',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
   },
   eventInfoCol: {
@@ -1624,25 +1631,22 @@ export const styles = StyleSheet.create({
   },
   eventTitle: {
     color: '#f8fafc',
-    fontSize: 18,
-    lineHeight: 22,
+    fontSize: 22,
+    lineHeight: 26,
     fontWeight: '700',
   },
   eventMeta: {
     color: '#cbd5e1',
-    fontSize: 12,
+    fontSize: 14,
     marginTop: 3,
   },
   eventRsvp: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
     marginTop: 4,
   },
-  eventSourceTicketmaster: {
-    color: '#60a5fa',
-  },
-  eventSourceEventbrite: {
-    color: '#fb923c',
+  eventSourceLabel: {
+    color: '#94a3b8',
   },
   eventStatusLive: {
     color: '#86efac',
@@ -1665,24 +1669,24 @@ export const styles = StyleSheet.create({
   },
   progressPostAuthor: {
     color: '#f8fafc',
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: '700',
   },
   progressPostTime: {
     color: '#94a3b8',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '600',
   },
   progressPostCaption: {
     color: '#e2e8f0',
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 16,
+    lineHeight: 22,
     marginTop: 8,
     marginBottom: 10,
   },
   progressPostStatus: {
     color: '#93c5fd',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
     marginTop: -2,
     marginBottom: 8,
@@ -1705,7 +1709,7 @@ export const styles = StyleSheet.create({
   },
   progressPostImageText: {
     color: '#94a3b8',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
   },
   createPostPreviewImage: {
@@ -1728,7 +1732,7 @@ export const styles = StyleSheet.create({
   leaderRank: {
     width: 28,
     color: '#86efac',
-    fontSize: 16,
+    fontSize: 19,
     fontWeight: '800',
   },
   leaderMid: {
@@ -1737,30 +1741,46 @@ export const styles = StyleSheet.create({
   },
   leaderName: {
     color: '#f8fafc',
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: '700',
   },
   leaderNote: {
     color: '#94a3b8',
-    fontSize: 11,
+    fontSize: 13,
     marginTop: 2,
   },
   leaderPts: {
     color: '#cbd5e1',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    /** Top-align date column with weather row (avoid vertical centering mismatch). */
+    alignItems: 'flex-start',
     position: 'relative',
     paddingTop: 12,
   },
   headerLeft: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 2,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  headerGreetingColumn: {
+    flex: 1,
+    minWidth: 0,
+  },
+  /** Same `gap` as `weatherStack`: primary line → secondary line (date→time, °F→condition). */
+  headerDateStack: {
+    marginTop: 0,
+    gap: 2,
+  },
+  /** Tighter text box so date/time top lines up with the weather row (Android extra font padding). */
+  headerDateLine: {
+    includeFontPadding: false,
   },
   menuBtn: {
     width: 44,
@@ -1777,7 +1797,7 @@ export const styles = StyleSheet.create({
   },
   greeting: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '700',
   },
   alertBlock: {
@@ -1806,13 +1826,13 @@ export const styles = StyleSheet.create({
   },
   alertBadgeText: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
-    lineHeight: 14,
+    lineHeight: 17,
   },
   alertText: {
     color: '#eab308',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
     marginTop: 2,
     textAlign: 'center',
@@ -1854,12 +1874,12 @@ export const styles = StyleSheet.create({
   },
   alertsTitle: {
     color: '#f8fafc',
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: '800',
   },
   alertsSubtitle: {
     color: '#94a3b8',
-    fontSize: 12,
+    fontSize: 14,
     marginTop: 2,
     fontWeight: '600',
   },
@@ -1874,7 +1894,7 @@ export const styles = StyleSheet.create({
   },
   alertsEmptyText: {
     color: '#cbd5e1',
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: '700',
   },
   alertsCard: {
@@ -1887,18 +1907,18 @@ export const styles = StyleSheet.create({
   },
   alertsCardTitle: {
     color: '#fecaca',
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: '800',
   },
   alertsCardDetail: {
     color: '#e2e8f0',
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 14,
+    lineHeight: 20,
     marginTop: 4,
   },
   alertsCardSeverity: {
     color: '#fca5a5',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
     marginTop: 7,
   },
@@ -1942,12 +1962,12 @@ export const styles = StyleSheet.create({
   },
   profileShowcaseTitle: {
     color: '#f8fafc',
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: '800',
   },
   profileShowcaseSubtitle: {
     color: '#94a3b8',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
     marginTop: 2,
   },
@@ -1982,7 +2002,7 @@ export const styles = StyleSheet.create({
   },
   profilePersonalityLabel: {
     color: '#64748b',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
     letterSpacing: 1.1,
     textTransform: 'uppercase',
@@ -1990,13 +2010,13 @@ export const styles = StyleSheet.create({
   },
   profilePersonalityCode: {
     color: '#f8fafc',
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: '800',
     letterSpacing: 4,
   },
   profilePersonalityName: {
     color: '#94a3b8',
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: '600',
     marginTop: 4,
   },
@@ -2021,15 +2041,15 @@ export const styles = StyleSheet.create({
   },
   profileQuestionnaireBtnTitle: {
     color: '#f8fafc',
-    fontSize: 14,
+    fontSize: 17,
     fontWeight: '700',
   },
   profileQuestionnaireBtnSubtitle: {
     color: '#94a3b8',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '600',
     marginTop: 3,
-    lineHeight: 15,
+    lineHeight: 18,
   },
   profileShowcaseDivider: {
     height: 1,
@@ -2040,7 +2060,7 @@ export const styles = StyleSheet.create({
   },
   profileBadgesSectionLabel: {
     color: '#e2e8f0',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '800',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
@@ -2048,12 +2068,12 @@ export const styles = StyleSheet.create({
   },
   profileBadgesSectionHint: {
     color: '#64748b',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
     marginTop: 6,
     marginBottom: 16,
     paddingHorizontal: 20,
-    lineHeight: 17,
+    lineHeight: 20,
   },
   profileBadgesGrid: {
     flexDirection: 'row',
@@ -2085,7 +2105,7 @@ export const styles = StyleSheet.create({
     opacity: 0.85,
   },
   profileBadgeGlyph: {
-    fontSize: 30,
+    fontSize: 36,
     textAlign: 'center',
     includeFontPadding: false,
   },
@@ -2094,10 +2114,10 @@ export const styles = StyleSheet.create({
   },
   profileBadgeName: {
     color: '#e2e8f0',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',
-    lineHeight: 14,
+    lineHeight: 17,
     marginTop: 10,
     width: '100%',
   },
@@ -2106,10 +2126,15 @@ export const styles = StyleSheet.create({
   },
   weatherText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '700',
+    lineHeight: 24,
   },
   weatherBlock: {
+    alignItems: 'flex-end',
+  },
+  /** Column under header; keep condition tucked close to °F row (avoid extra gap stacking). */
+  weatherStack: {
     alignItems: 'flex-end',
   },
   weatherTopRow: {
@@ -2119,14 +2144,22 @@ export const styles = StyleSheet.create({
   },
   weatherSubText: {
     color: '#e5e7eb',
-    fontSize: 10,
-    marginTop: -1,
+    fontSize: 12,
+    lineHeight: 14,
+    /** Pull label up under the icon/°F row; `gap` here was reading as too much space. */
+    marginTop: -5,
     fontWeight: '500',
   },
   date: {
-    color: '#71717A',
-    fontSize: 9,
-    marginTop: 1,
+    color: '#e4e4e7',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 0,
+  },
+  dateTimeSub: {
+    color: '#a1a1aa',
+    fontWeight: '600',
+    letterSpacing: 0.2,
   },
   scoreCard: {
     borderRadius: 18,
@@ -2150,7 +2183,7 @@ export const styles = StyleSheet.create({
   },
   scoreLabel: {
     color: '#52525b',
-    fontSize: 9,
+    fontSize: 11,
     letterSpacing: 2.2,
     fontWeight: '700',
     textAlign: 'center',
@@ -2160,8 +2193,8 @@ export const styles = StyleSheet.create({
     color: '#ef4444',
     textAlign: 'center',
     marginTop: 64,
-    fontSize: 17,
-    lineHeight: 17,
+    fontSize: 20,
+    lineHeight: 20,
     fontWeight: '700',
   },
   scoreRow: {
@@ -2172,12 +2205,12 @@ export const styles = StyleSheet.create({
   },
   score: {
     color: '#fff',
-    fontSize: 66,
+    fontSize: 79,
     fontWeight: '700',
   },
   scoreUnit: {
     color: '#71717a',
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '500',
     marginLeft: 4,
   },
@@ -2186,7 +2219,7 @@ export const styles = StyleSheet.create({
     letterSpacing: 5.6,
     fontWeight: '700',
     marginTop: 1,
-    fontSize: 15,
+    fontSize: 18,
     textAlign: 'center',
   },
   scoreStateGood: {
@@ -2198,7 +2231,7 @@ export const styles = StyleSheet.create({
   scoreSub: {
     color: '#71717a',
     marginTop: 3,
-    fontSize: 11,
+    fontSize: 13,
     textAlign: 'center',
   },
   grid: {
@@ -2222,7 +2255,7 @@ export const styles = StyleSheet.create({
   },
   metricLabel: {
     color: '#a1a1aa',
-    fontSize: 8,
+    fontSize: 10,
     fontWeight: '700',
     letterSpacing: 0.5,
   },
@@ -2233,18 +2266,18 @@ export const styles = StyleSheet.create({
   },
   metricValue: {
     color: '#fff',
-    fontSize: 24,
+    fontSize: 29,
     fontWeight: '700',
     marginTop: 4,
   },
   metricUnit: {
     color: '#71717a',
-    fontSize: 8,
+    fontSize: 10,
     fontWeight: '700',
     marginBottom: 4,
   },
   metricStatus: {
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: '700',
     marginTop: 4,
   },
@@ -2323,31 +2356,31 @@ export const styles = StyleSheet.create({
   },
   foodToggleText: {
     color: '#EAB308',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
   },
   foodToggleGlyph: {
     color: '#EAB308',
-    fontSize: 16,
+    fontSize: 19,
     fontWeight: '300',
-    lineHeight: 18,
+    lineHeight: 22,
     marginTop: -1,
   },
   cardBadge: {
     color: '#60A5FA',
-    fontSize: 8,
+    fontSize: 10,
     letterSpacing: 0.8,
     fontWeight: '700',
   },
   cardTitle: {
     color: '#fff',
     fontWeight: '700',
-    fontSize: 17,
+    fontSize: 20,
   },
   cardText: {
     color: '#d4d4d8',
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 14,
+    lineHeight: 20,
   },
   advisorCardBody: {
     flexDirection: 'row',
@@ -2392,17 +2425,18 @@ export const styles = StyleSheet.create({
     paddingBottom: 6,
   },
   advisorGallerySlideText: {
-    color: '#d4d4d8',
-    fontSize: 12,
-    lineHeight: 17,
+    color: '#f1f5f9',
+    fontSize: 18,
+    lineHeight: 26,
+    fontWeight: '600',
     textAlign: 'center',
     alignSelf: 'stretch',
   },
   advisorGallerySlideTextSteady: {
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: '700',
-    color: '#e2e8f0',
+    fontSize: 22,
+    lineHeight: 30,
+    fontWeight: '800',
+    color: '#ffffff',
     letterSpacing: -0.2,
   },
   advisorGalleryBtnRow: {
@@ -2423,7 +2457,7 @@ export const styles = StyleSheet.create({
   advisorGalleryPrimaryBtnText: {
     color: '#fff',
     fontWeight: '700',
-    fontSize: 9,
+    fontSize: 11,
   },
   advisorGallerySecondaryBtn: {
     flex: 1,
@@ -2438,7 +2472,7 @@ export const styles = StyleSheet.create({
   advisorGallerySecondaryBtnText: {
     color: '#a1a1aa',
     fontWeight: '700',
-    fontSize: 9,
+    fontSize: 11,
   },
   row: {
     flexDirection: 'row',
@@ -2454,7 +2488,7 @@ export const styles = StyleSheet.create({
   primaryBtnText: {
     color: '#fff',
     fontWeight: '700',
-    fontSize: 11,
+    fontSize: 13,
   },
   secondaryBtn: {
     flex: 1,
@@ -2467,7 +2501,7 @@ export const styles = StyleSheet.create({
   secondaryBtnText: {
     color: '#a1a1aa',
     fontWeight: '700',
-    fontSize: 11,
+    fontSize: 13,
   },
   foodBtn: {
     flexShrink: 0,
@@ -2479,12 +2513,12 @@ export const styles = StyleSheet.create({
   },
   foodBtnText: {
     color: '#EAB308',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
   },
   sectionLabel: {
     color: '#52525b',
-    fontSize: 9,
+    fontSize: 11,
     letterSpacing: 0.9,
     fontWeight: '700',
     marginTop: 2,
@@ -2498,12 +2532,12 @@ export const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     alignItems: 'center',
-    gap: 7,
+    gap: 9,
   },
   quickIcon: {
-    width: 54,
-    height: 54,
-    borderRadius: 16,
+    width: 62,
+    height: 62,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.42)',
     backgroundColor: 'transparent',
@@ -2517,12 +2551,13 @@ export const styles = StyleSheet.create({
   },
   quickIconGlyph: {
     color: '#a1a1aa',
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: '700',
   },
   quickText: {
     color: '#71717a',
-    fontSize: 7,
+    fontSize: 13,
+    fontWeight: '600',
     width: '100%',
     textAlign: 'center',
   },
@@ -2557,7 +2592,7 @@ export const styles = StyleSheet.create({
   },
   activityLabel: {
     color: '#71717a',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
     letterSpacing: 0.8,
   },
@@ -2575,7 +2610,7 @@ export const styles = StyleSheet.create({
   },
   activityValue: {
     color: '#fff',
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: '800',
   },
   activityTrack: {
@@ -2640,16 +2675,16 @@ export const styles = StyleSheet.create({
   },
   navIcon: {
     color: '#52525b',
-    fontSize: 26,
+    fontSize: 31,
     fontWeight: '700',
-    lineHeight: 26,
+    lineHeight: 31,
     textAlign: 'center',
   },
   navText: {
     color: '#52525b',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
-    lineHeight: 13,
+    lineHeight: 14,
     textAlign: 'center',
     width: '100%',
   },
@@ -2674,9 +2709,9 @@ export const styles = StyleSheet.create({
   },
   navAlertBadgeText: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '800',
-    lineHeight: 11,
+    lineHeight: 13,
   },
   sidebarOverlay: {
     position: 'absolute',
@@ -2705,13 +2740,13 @@ export const styles = StyleSheet.create({
   },
   sidebarTitle: {
     color: '#f3f4f6',
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: '800',
   },
   sidebarClose: {
     color: '#f3f4f6',
-    fontSize: 24,
-    lineHeight: 24,
+    fontSize: 29,
+    lineHeight: 29,
   },
   sidebarItem: {
     paddingVertical: 8,
@@ -2720,7 +2755,7 @@ export const styles = StyleSheet.create({
   },
   sidebarItemText: {
     color: '#e5e7eb',
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '700',
     textDecorationLine: 'underline',
   },
@@ -2738,7 +2773,7 @@ export const styles = StyleSheet.create({
   },
   sidebarSectionTitle: {
     color: '#e5e7eb',
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '800',
     marginBottom: 10,
     textDecorationLine: 'underline',
@@ -2759,7 +2794,7 @@ export const styles = StyleSheet.create({
   },
   demoToggleLabel: {
     color: '#d1d5db',
-    fontSize: 15,
+    fontSize: 18,
     flex: 1,
     fontWeight: '700',
   },
@@ -2779,7 +2814,7 @@ export const styles = StyleSheet.create({
   },
   demoTogglePillText: {
     color: '#e5e7eb',
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '700',
   },
   demoTogglePillTextActive: {
@@ -2797,9 +2832,9 @@ export const styles = StyleSheet.create({
   },
   demoDropdownText: {
     color: '#cbd5e1',
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '700',
-    lineHeight: 13,
+    lineHeight: 16,
   },
   demoDropdownList: {
     marginTop: 2,
@@ -2808,7 +2843,47 @@ export const styles = StyleSheet.create({
   demoHelperText: {
     marginTop: 10,
     color: '#9ca3af',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '500',
+  },
+  demoPaletteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    marginBottom: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  demoPaletteRowActive: {
+    borderColor: 'rgba(59,130,246,0.75)',
+    backgroundColor: 'rgba(59,130,246,0.18)',
+  },
+  demoPaletteSwatches: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  demoPaletteSwatchDot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.25)',
+  },
+  demoPaletteRowLabel: {
+    flex: 1,
+    color: '#e5e7eb',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  demoPaletteRowHint: {
+    color: '#9ca3af',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

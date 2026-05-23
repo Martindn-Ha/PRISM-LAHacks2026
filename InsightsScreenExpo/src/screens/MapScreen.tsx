@@ -3,6 +3,8 @@ import React, { useMemo } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import { MAP_LAYERS, type MapLayerFilter } from '../constants/appNavigation';
+import { useDemoPalette } from '../context/DemoPaletteContext';
+import { mergePaletteLayer } from '../theme/demoPaletteTheme';
 import { styles } from '../styles/appStyles';
 import type { MapScreenPin } from '../types/experience';
 
@@ -19,6 +21,7 @@ type Props = {
 };
 
 export default function MapScreen(props: Props) {
+  const { layers } = useDemoPalette();
   const { activeMapLayer, setActiveMapLayer, mapLocationStatus, mapCoords, mapDiscoveryEventsLoading, mapViewRef, mapRecommendations, openEventLinkPrompt, recenterMapToCurrentLocation } = props;
   const mapRegion = useMemo(
     () =>
@@ -33,20 +36,30 @@ export default function MapScreen(props: Props) {
     [mapCoords?.lat, mapCoords?.lon],
   );
   return (
-        <View style={styles.mapScreen}>
-          <Text style={styles.mapTitle}>Map</Text>
+        <View style={mergePaletteLayer(layers, 'mapScreen', styles.mapScreen)}>
+          <Text style={mergePaletteLayer(layers, 'mapTitle', styles.mapTitle)}>Map</Text>
           <View style={styles.mapLayerRow}>
             {MAP_LAYERS.map((layer) => (
               <TouchableOpacity
                 key={layer}
                 onPress={() => setActiveMapLayer((prev) => (prev === layer ? null : layer))}
-                style={[styles.mapLayerChip, activeMapLayer === layer && styles.mapLayerChipActive]}
+                style={[
+                  mergePaletteLayer(layers, 'mapLayerChip', styles.mapLayerChip),
+                  activeMapLayer === layer && mergePaletteLayer(layers, 'mapLayerChipActive', styles.mapLayerChipActive),
+                ]}
               >
-                <Text style={[styles.mapLayerChipText, activeMapLayer === layer && styles.mapLayerChipTextActive]}>{layer}</Text>
+                <Text
+                  style={[
+                    mergePaletteLayer(layers, 'mapLayerChipText', styles.mapLayerChipText),
+                    activeMapLayer === layer && mergePaletteLayer(layers, 'mapLayerChipTextActive', styles.mapLayerChipTextActive),
+                  ]}
+                >
+                  {layer}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
-          <Text style={styles.mapSubtitle}>
+          <Text style={mergePaletteLayer(layers, 'mapSubtitle', styles.mapSubtitle)}>
             {mapLocationStatus === 'granted'
               ? 'Showing your current location'
               : mapLocationStatus === 'denied'
@@ -54,10 +67,12 @@ export default function MapScreen(props: Props) {
                 : 'Requesting location...'}
           </Text>
           {mapCoords && mapDiscoveryEventsLoading ? (
-            <Text style={styles.mapSubtitle}>Loading Ticketmaster & Eventbrite listings…</Text>
+            <Text style={mergePaletteLayer(layers, 'mapSubtitle', styles.mapSubtitle)}>
+              Loading map…
+            </Text>
           ) : null}
           {mapCoords && mapRegion ? (
-            <View style={styles.mapContainer}>
+            <View style={mergePaletteLayer(layers, 'mapContainer', styles.mapContainer)}>
               <MapView
                 ref={mapViewRef}
                 region={mapRegion}

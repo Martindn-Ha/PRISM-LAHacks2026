@@ -8,6 +8,8 @@ import { COMMUNITY_ACTIONS, COMMUNITY_OVERVIEW_DESCRIPTION } from '../constants/
 import { COMMUNITY_SPOTLIGHT_IMAGE_URL } from '../config/publicEnv';
 import { formatEventSourceName } from '../utils/format';
 import type { InviteContact } from '../types/experience';
+import { useDemoPalette } from '../context/DemoPaletteContext';
+import { mergePaletteLayer } from '../theme/demoPaletteTheme';
 import { styles } from '../styles/appStyles';
 
 type Props = any;
@@ -16,6 +18,7 @@ const COMMUNITY_SETTINGS_MENU_W = 216;
 const COMMUNITY_SETTINGS_MENU_H = 50;
 
 export default function GoalsScreen(props: Props) {
+  const { layers } = useDemoPalette();
   const [selectedChallengeDetail, setSelectedChallengeDetail] = useState<any | null>(null);
   const [communitySettingsMenu, setCommunitySettingsMenu] = useState<{ visible: boolean; anchor: { x: number; y: number; w: number; h: number } | null }>(
     { visible: false, anchor: null },
@@ -38,7 +41,11 @@ export default function GoalsScreen(props: Props) {
       closeCommunitySettingsMenu();
       return;
     }
-    communityHeroSettingsRef.current?.measureInWindow((x, y, w, h) => {
+    const node = communityHeroSettingsRef.current;
+    if (!node || typeof node.measureInWindow !== 'function') {
+      return;
+    }
+    node.measureInWindow((x, y, w, h) => {
       setCommunitySettingsMenu({ visible: true, anchor: { x, y, w, h } });
     });
   };
@@ -79,17 +86,29 @@ export default function GoalsScreen(props: Props) {
     }
   }, [selectedJoinedCommunity]);
   return (
-        <View style={styles.goalsScreen}>
-          <Text style={styles.goalsTitle}>Goals</Text>
-          <Text style={styles.goalsSubtitle}>Track progress across communities, events, and personal challenges.</Text>
+        <View style={mergePaletteLayer(layers, 'goalsScreen', styles.goalsScreen)}>
+          <Text style={mergePaletteLayer(layers, 'goalsTitle', styles.goalsTitle)}>Goals</Text>
+          <Text style={mergePaletteLayer(layers, 'goalsSubtitle', styles.goalsSubtitle)}>
+            Track progress across communities, events, and personal challenges.
+          </Text>
           <View style={styles.goalsTabRow}>
             {GOALS_TABS.map((tab) => (
               <TouchableOpacity
                 key={tab}
                 onPress={() => setGoalsTab(tab)}
-                style={[styles.goalsTab, goalsTab === tab && styles.goalsTabActive]}
+                style={[
+                  mergePaletteLayer(layers, 'goalsTab', styles.goalsTab),
+                  goalsTab === tab && mergePaletteLayer(layers, 'goalsTabActive', styles.goalsTabActive),
+                ]}
               >
-                <Text style={[styles.goalsTabText, goalsTab === tab && styles.goalsTabTextActive]}>{tab}</Text>
+                <Text
+                  style={[
+                    mergePaletteLayer(layers, 'goalsTabText', styles.goalsTabText),
+                    goalsTab === tab && mergePaletteLayer(layers, 'goalsTabTextActive', styles.goalsTabTextActive),
+                  ]}
+                >
+                  {tab}
+                </Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -125,10 +144,16 @@ export default function GoalsScreen(props: Props) {
                     </View>
                     <Text style={styles.communityHeroTag}>Community Spotlight</Text>
                   </View>
-                  <View style={styles.communityDetailCard}>
-                    <Text style={styles.communityDetailTitle}>{selectedJoinedCommunity.name}</Text>
-                    <Text style={styles.communityDetailMeta}>Multisport • {selectedJoinedCommunity.members} • Public</Text>
-                    <Text style={styles.communityDetailSub}>Built for daily progress and mutual accountability.</Text>
+                  <View style={mergePaletteLayer(layers, 'communityDetailCard', styles.communityDetailCard)}>
+                    <Text style={mergePaletteLayer(layers, 'communityDetailTitle', styles.communityDetailTitle)}>
+                      {selectedJoinedCommunity.name}
+                    </Text>
+                    <Text style={mergePaletteLayer(layers, 'communityDetailMeta', styles.communityDetailMeta)}>
+                      Multisport • {selectedJoinedCommunity.members} • Public
+                    </Text>
+                    <Text style={mergePaletteLayer(layers, 'communityDetailSub', styles.communityDetailSub)}>
+                      Built for daily progress and mutual accountability.
+                    </Text>
                     <View style={styles.communityActionsRow}>
                       {COMMUNITY_ACTIONS.map((action) => (
                         <View key={action.label} style={styles.communityActionItem}>
@@ -165,7 +190,9 @@ export default function GoalsScreen(props: Props) {
                           >
                             <Text style={styles.communityActionIcon}>{action.icon}</Text>
                           </TouchableOpacity>
-                          <Text style={styles.communityActionLabel}>{action.label}</Text>
+                          <Text style={mergePaletteLayer(layers, 'communityActionLabel', styles.communityActionLabel)}>
+                            {action.label}
+                          </Text>
                         </View>
                       ))}
                     </View>
@@ -292,14 +319,7 @@ export default function GoalsScreen(props: Props) {
                                   <View style={styles.eventInfoCol}>
                                     <Text style={styles.eventTitle}>{event.title}</Text>
                                     <Text style={styles.eventMeta}>{event.meta}</Text>
-                                    <Text
-                                      style={[
-                                        styles.eventRsvp,
-                                        (event.source ?? 'ticketmaster').toLowerCase() === 'eventbrite'
-                                          ? styles.eventSourceEventbrite
-                                          : styles.eventSourceTicketmaster,
-                                      ]}
-                                    >
+                                    <Text style={[styles.eventRsvp, styles.eventSourceLabel]}>
                                       {`${formatEventSourceName(event.source)}: `}
                                       <Text style={eventsTab === 'Upcoming' ? styles.eventStatusLive : styles.eventStatusPassed}>
                                         {eventsTab === 'Upcoming' ? 'Live' : 'Passed'}
@@ -351,22 +371,24 @@ export default function GoalsScreen(props: Props) {
                   )}
                 </View>
               ) : joinedCommunities.length === 0 ? (
-                <View style={styles.goalsCard}>
-                  <Text style={styles.goalsCardTitle}>No joined communities yet</Text>
-                  <Text style={styles.goalsCardDetail}>Go to Communities and press Join to add one here.</Text>
+                <View style={mergePaletteLayer(layers, 'goalsCard', styles.goalsCard)}>
+                  <Text style={mergePaletteLayer(layers, 'goalsCardTitle', styles.goalsCardTitle)}>No joined communities yet</Text>
+                  <Text style={mergePaletteLayer(layers, 'goalsCardDetail', styles.goalsCardDetail)}>
+                    Go to Communities and press Join to add one here.
+                  </Text>
                 </View>
               ) : (
                 joinedCommunities.map((community) => (
                   <TouchableOpacity
                     key={community.name}
                     onPress={() => setSelectedJoinedCommunityName(community.name)}
-                    style={[styles.goalsCard, styles.goalsCommunityCard]}
+                    style={[mergePaletteLayer(layers, 'goalsCard', styles.goalsCard), styles.goalsCommunityCard]}
                   >
                     <Image source={{ uri: community.coverUrl }} style={styles.goalsCommunityCardImage} resizeMode="cover" />
                     <View style={styles.goalsCommunityCardBody}>
-                      <Text style={styles.goalsCardTitle}>{community.name}</Text>
-                      <Text style={styles.goalsCardDetail}>{community.city}</Text>
-                      <Text style={styles.goalsCardMeta}>{`Joined • ${community.members}`}</Text>
+                      <Text style={mergePaletteLayer(layers, 'goalsCardTitle', styles.goalsCardTitle)}>{community.name}</Text>
+                      <Text style={mergePaletteLayer(layers, 'goalsCardDetail', styles.goalsCardDetail)}>{community.city}</Text>
+                      <Text style={mergePaletteLayer(layers, 'goalsCardMeta', styles.goalsCardMeta)}>{`Joined • ${community.members}`}</Text>
                     </View>
                   </TouchableOpacity>
                 ))
@@ -420,8 +442,12 @@ export default function GoalsScreen(props: Props) {
                       </Text>
                       <Text style={styles.challengeMembersPill}>{c.members}</Text>
                     </View>
-                    <Text numberOfLines={2} style={styles.goalsCardTitle}>{c.title}</Text>
-                    <Text numberOfLines={3} style={styles.goalsCardDetail}>{c.detail}</Text>
+                    <Text numberOfLines={2} style={mergePaletteLayer(layers, 'goalsCardTitle', styles.goalsCardTitle)}>
+                      {c.title}
+                    </Text>
+                    <Text numberOfLines={3} style={mergePaletteLayer(layers, 'goalsCardDetail', styles.goalsCardDetail)}>
+                      {c.detail}
+                    </Text>
                     <View style={styles.challengeChipRow}>
                       {c.type === 'community' ? (
                         <View style={styles.challengeChip}>
@@ -447,7 +473,7 @@ export default function GoalsScreen(props: Props) {
                       <Text style={styles.challengeProgressLabel}>{c.type === 'community' ? '72%' : '48%'}</Text>
                     </View>
                     <View style={styles.challengeCardFooter}>
-                      <Text style={styles.goalsCardMeta}>Momentum rising</Text>
+                      <Text style={mergePaletteLayer(layers, 'goalsCardMeta', styles.goalsCardMeta)}>Momentum rising</Text>
                       <TouchableOpacity onPress={() => setSelectedChallengeDetail(c)} style={styles.challengeQuickActionBtn}>
                         <Text style={styles.challengeQuickActionText}>Open</Text>
                       </TouchableOpacity>
@@ -553,9 +579,11 @@ export default function GoalsScreen(props: Props) {
                   );
                 })}
                 {filteredCommunities.length === 0 ? (
-                  <View style={styles.goalsCard}>
-                    <Text style={styles.goalsCardTitle}>No communities found</Text>
-                    <Text style={styles.goalsCardDetail}>Try a different name or city in search.</Text>
+                  <View style={mergePaletteLayer(layers, 'goalsCard', styles.goalsCard)}>
+                    <Text style={mergePaletteLayer(layers, 'goalsCardTitle', styles.goalsCardTitle)}>No communities found</Text>
+                    <Text style={mergePaletteLayer(layers, 'goalsCardDetail', styles.goalsCardDetail)}>
+                      Try a different name or city in search.
+                    </Text>
                   </View>
                 ) : null}
               </View>

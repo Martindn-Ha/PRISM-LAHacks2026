@@ -54,7 +54,7 @@ export type CommunityEventItem = {
   sourceUrl?: string | null;
   source?: string | null;
   venue?: string | null;
-  /** Full street + locality from provider when available (Ticketmaster / Eventbrite venues). */
+  /** Full street + locality when available from the event listing. */
   address?: string | null;
   latitude?: number | null;
   longitude?: number | null;
@@ -90,7 +90,7 @@ export type InviteContact = {
   phone: string | null;
 };
 
-/** Alert logs tab: one row per dashboard alert lifecycle event (threshold, recovery, dismiss, demo push). */
+/** Alert log row: one entry per dashboard alert lifecycle event (threshold, recovery, dismiss, demo push). Shown in home alert modal. */
 export type AlertLogLevel = 'info' | 'warn' | 'error' | 'debug';
 
 export type AlertLogEvent = {

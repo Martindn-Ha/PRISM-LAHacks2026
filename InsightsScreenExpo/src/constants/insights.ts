@@ -36,6 +36,24 @@ export const INSIGHTS_TABS = [
 
 export type InsightTab = (typeof INSIGHTS_TABS)[number];
 
+/** Dashboard vitals row → Insights detail tab. */
+export const DASHBOARD_METRIC_INSIGHT_TAB = {
+  GLUCOSE: 'Blood Glucose',
+  'STRESS LEVEL': 'Mindfulness',
+  'HEART RATE': 'Heart Rate',
+} as const satisfies Record<string, InsightTab>;
+
+export type DashboardMetricLabel = keyof typeof DASHBOARD_METRIC_INSIGHT_TAB;
+
+/** Compact labels for tight UI (dashboard quick actions, chips). */
+export const INSIGHT_TAB_SHORT_LABEL: Partial<Record<InsightTab, string>> = {
+  'Walking + Running Distance': 'Distance',
+};
+
+export function insightTabLabel(tab: InsightTab): string {
+  return INSIGHT_TAB_SHORT_LABEL[tab] ?? tab;
+}
+
 export const INSIGHT_GROUPS = [
   {
     id: 'cardio',
@@ -126,7 +144,7 @@ export const INSIGHT_UNITS: Record<InsightTab, string> = {
 
 export const INSIGHTS_TAB_CONTENT: Record<InsightTab, InsightContent> = INSIGHTS_TABS.reduce((acc, tab) => {
   acc[tab] = {
-    title: tab,
+    title: insightTabLabel(tab),
     summary: `Connect Apple Health to view ${tab.toLowerCase()} data.`,
     trend: 'Trend: unavailable',
     recommendation: `Track ${tab.toLowerCase()} consistently for stronger trends.`,
@@ -151,7 +169,7 @@ export const QUICK_ACTION_METRIC_OPTIONS: InsightTab[] = [
   'Blood Oxygen',
 ];
 
-export const DASHBOARD_QUICK_ACTION_SLOTS = 6;
+export const DASHBOARD_QUICK_ACTION_SLOTS = 3;
 
 export const QUICK_ACTION_ICON_BY_TAB: Record<InsightTab, string> = {
   'Heart Rate': '♥',

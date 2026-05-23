@@ -1,10 +1,36 @@
 /** Format a single trend point for axis / callouts (no trailing .0). */
 export function formatTrendPointValue(v: number): string {
-  if (!(v > 0)) {
+  if (!Number.isFinite(v) || !(v > 0)) {
     return '0';
   }
   const s = v.toFixed(1);
   return s.endsWith('.0') ? s.slice(0, -2) : s;
+}
+
+const DEFAULT_WEEKDAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as const;
+
+/** Coerce Health / demo series into finite non-negative numbers (avoids NaN in SVG paths). */
+export function sanitizeInsightTrendPoints(raw: unknown[] | null | undefined): number[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  if (arr.length === 0) {
+    return [0, 0, 0, 0, 0, 0, 0];
+  }
+  return arr.map((v) => {
+    const n = typeof v === 'number' ? v : Number(v);
+    if (!Number.isFinite(n) || n < 0) {
+      return 0;
+    }
+    return n;
+  });
+}
+
+/** Keep one label per point; pad or trim so charts never read past `labels.length`. */
+export function alignTrendLabelsForPoints(n: number, provided?: string[] | null): string[] {
+  const p = Array.isArray(provided) ? provided : [];
+  if (p.length === n) {
+    return [...p];
+  }
+  return Array.from({ length: n }, (_, i) => p[i] ?? DEFAULT_WEEKDAY_LABELS[i % DEFAULT_WEEKDAY_LABELS.length]!);
 }
 
 /**
@@ -17,6 +43,9 @@ export function buildDenseAxisTickIndices(
   xByIndex: number[],
   options?: { minGapPx?: number; maxTicks?: number },
 ): number[] {
+  if (!Number.isFinite(n) || n < 1 || !Array.isArray(xByIndex) || xByIndex.length < n) {
+    return [];
+  }
   const minGap = options?.minGapPx ?? 54;
   const maxTicks = options?.maxTicks ?? 10;
 
@@ -39,6 +68,9 @@ export function buildDenseAxisTickIndices(
     }
     const x = xByIndex[idx];
     const prevX = xByIndex[spaced[spaced.length - 1]];
+    if (!Number.isFinite(x) || !Number.isFinite(prevX)) {
+      continue;
+    }
     if (x - prevX >= minGap) {
       spaced.push(idx);
     } else if (idx === n - 1) {

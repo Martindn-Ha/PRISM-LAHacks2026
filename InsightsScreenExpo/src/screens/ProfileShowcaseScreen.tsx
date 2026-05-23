@@ -6,6 +6,8 @@ import {
   PROFILE_BADGES,
   PROFILE_DEMO_PERSONALITY,
 } from '../constants/profileBadges';
+import { useDemoPalette } from '../context/DemoPaletteContext';
+import { mergePaletteLayer } from '../theme/demoPaletteTheme';
 import { styles } from '../styles/appStyles';
 
 type Props = {
@@ -13,6 +15,7 @@ type Props = {
 };
 
 export default function ProfileShowcaseScreen({ onClose }: Props) {
+  const { layers, theme } = useDemoPalette();
   const openNeoStyleQuestionnaire = useCallback(async () => {
     try {
       const supported = await Linking.canOpenURL(NEO_STYLE_PERSONALITY_QUESTIONNAIRE_URL);
@@ -27,15 +30,15 @@ export default function ProfileShowcaseScreen({ onClose }: Props) {
   }, []);
 
   return (
-    <View style={styles.profileShowcaseBackdrop}>
-      <View style={styles.profileShowcaseCard}>
+    <View style={mergePaletteLayer(layers, 'profileShowcaseBackdrop', styles.profileShowcaseBackdrop)}>
+      <View style={mergePaletteLayer(layers, 'profileShowcaseCard', styles.profileShowcaseCard)}>
         <View style={styles.profileShowcaseHeader}>
           <TouchableOpacity accessibilityRole="button" onPress={onClose} style={styles.profileShowcaseBackBtn}>
-            <Ionicons name="chevron-back" size={22} color="#f8fafc" />
+            <Ionicons name="chevron-back" size={22} color={theme?.textPrimary ?? '#f8fafc'} />
           </TouchableOpacity>
           <View style={styles.profileShowcaseHeaderText}>
-            <Text style={styles.profileShowcaseTitle}>Profile</Text>
-            <Text style={styles.profileShowcaseSubtitle}>Mr. Chan</Text>
+            <Text style={mergePaletteLayer(layers, 'profileShowcaseTitle', styles.profileShowcaseTitle)}>Profile</Text>
+            <Text style={mergePaletteLayer(layers, 'profileShowcaseSubtitle', styles.profileShowcaseSubtitle)}>Mr. Chan</Text>
           </View>
         </View>
         <ScrollView bounces={false} overScrollMode="never" showsVerticalScrollIndicator={false} style={styles.profileShowcaseScroll}>
@@ -45,9 +48,13 @@ export default function ProfileShowcaseScreen({ onClose }: Props) {
             </View>
           </View>
           <View style={styles.profilePersonalityBlock}>
-            <Text style={styles.profilePersonalityLabel}>Personality type</Text>
-            <Text style={styles.profilePersonalityCode}>{PROFILE_DEMO_PERSONALITY.code}</Text>
-            <Text style={styles.profilePersonalityName}>{PROFILE_DEMO_PERSONALITY.name}</Text>
+            <Text style={mergePaletteLayer(layers, 'profilePersonalityLabel', styles.profilePersonalityLabel)}>Personality type</Text>
+            <Text style={mergePaletteLayer(layers, 'profilePersonalityCode', styles.profilePersonalityCode)}>
+              {PROFILE_DEMO_PERSONALITY.code}
+            </Text>
+            <Text style={mergePaletteLayer(layers, 'profilePersonalityName', styles.profilePersonalityName)}>
+              {PROFILE_DEMO_PERSONALITY.name}
+            </Text>
             <TouchableOpacity
               accessibilityHint="Opens the Big Five personality questionnaire in your browser"
               accessibilityLabel="Take NEO style personality questionnaire"
@@ -66,15 +73,23 @@ export default function ProfileShowcaseScreen({ onClose }: Props) {
             </TouchableOpacity>
           </View>
           <View style={styles.profileShowcaseDivider} />
-          <Text style={styles.profileBadgesSectionLabel}>Achievements</Text>
-          <Text style={styles.profileBadgesSectionHint}>Unlocked badges shine; others unlock as you progress.</Text>
+          <Text style={mergePaletteLayer(layers, 'profileBadgesSectionLabel', styles.profileBadgesSectionLabel)}>Achievements</Text>
+          <Text style={mergePaletteLayer(layers, 'profileBadgesSectionHint', styles.profileBadgesSectionHint)}>
+            Unlocked badges shine; others unlock as you progress.
+          </Text>
           <View style={styles.profileBadgesGrid}>
             {PROFILE_BADGES.map((badge) => (
               <View key={badge.id} style={styles.profileBadgeCell}>
                 <View style={[styles.profileBadgeCircle, !badge.unlocked && styles.profileBadgeCircleLocked]}>
                   <Text style={[styles.profileBadgeGlyph, !badge.unlocked && styles.profileBadgeGlyphLocked]}>{badge.glyph}</Text>
                 </View>
-                <Text style={[styles.profileBadgeName, !badge.unlocked && styles.profileBadgeNameLocked]} numberOfLines={2}>
+                <Text
+                  style={[
+                    mergePaletteLayer(layers, 'profileBadgeName', styles.profileBadgeName),
+                    !badge.unlocked && mergePaletteLayer(layers, 'profileBadgeNameLocked', styles.profileBadgeNameLocked),
+                  ]}
+                  numberOfLines={2}
+                >
                   {badge.name}
                 </Text>
               </View>

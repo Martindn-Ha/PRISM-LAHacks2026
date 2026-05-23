@@ -12,6 +12,7 @@ import {
   Modal,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  InteractionManager,
   Platform,
   Pressable,
   ScrollView,
@@ -27,23 +28,22 @@ import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop, Text as SvgText } 
 import * as Location from 'expo-location';
 import * as Contacts from 'expo-contacts';
 import * as ImagePicker from 'expo-image-picker';
-import MapView, { Marker } from 'react-native-maps';
+import MapView from 'react-native-maps';
 import { addDoc, collection, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { getScorePresentation } from '../services/scoringService';
 import WeatherIcon from '../components/WeatherIcon';
 import { fetchCurrentWeather } from '../services/weatherService';
 import { APP_DISPLAY_NAME } from '../constants/appBranding';
+import { useDemoPalette } from '../context/DemoPaletteContext';
+import { DEMO_PALETTE_CHOICES, getAppCanvasBackground, mergePaletteLayer, mixHex, withAlpha } from '../theme/demoPaletteTheme';
 import { styles } from '../styles/appStyles';
 import {
-  ACTIVITY,
   CHALLENGE_FILTERS,
   type ChallengeFilter,
   GOALS_CHALLENGES,
   GOALS_TABS,
   type GoalsTab,
   type GoalChallenge,
-  MAP_LAYERS,
-  type MapLayer,
   type MapLayerFilter,
   NAV_ITEMS,
 } from '../constants/appNavigation';
@@ -56,7 +56,9 @@ import {
   COMMUNITY_UPCOMING_EVENTS,
 } from '../constants/community';
 import {
+  DASHBOARD_METRIC_INSIGHT_TAB,
   DASHBOARD_QUICK_ACTION_SLOTS,
+  insightTabLabel,
   INSIGHT_GROUPS,
   INSIGHTS_TAB_CONTENT,
   INSIGHT_UNITS,
@@ -72,18 +74,19 @@ import {
 import { ARISTA_COMMUNITY_EVENTS_URL, COMMUNITY_SPOTLIGHT_IMAGE_URL, hasFirebaseConfig } from '../config/publicEnv';
 import { DashboardQuickActionMetricsRow } from '../components/dashboard/DashboardQuickMetrics';
 import { InsightsFavoriteSparkPage } from '../components/insights/InsightsFavoriteSparkPage';
-import { ActivityMiniIcon, InsightsBulbIcon } from '../components/icons/WellnessIcons';
+import { InsightsBulbIcon } from '../components/icons/WellnessIcons';
 import { fetchAristaCommunityEvents, fetchAristaContext } from '../lib/aristaClient';
-import { buildCloudinaryImageVariants, uploadImageToCloudinary } from '../lib/cloudinaryUpload';
-import { generateAdvisorSuggestionBody, generateProgressPostMetadata, preloadZeticModel } from '../lib/zeticClient';
+import { buildProgressPostHeuristics, generateAdvisorSuggestionBody } from '../lib/heuristicContent';
 import { Notifications } from '../lib/expoNotifications';
 import { getFirestoreInstance } from '../lib/firestoreClient';
-import { healthKit } from '../lib/appleHealthKit';
+import { buildInsightsHealthKitReadPermissions, healthKit } from '../lib/appleHealthKit';
+import { getHealthKitLinked, setHealthKitLinked } from '../lib/healthKitConnection';
 import { buildProgressPostDisplayCaption, formatEventSourceName, toErrorText, toShareSlug } from '../utils/format';
 import GoalsScreen from './GoalsScreen';
 import InsightsScreen from './InsightsScreen';
 import MapScreen from './MapScreen';
 import LogsScreen from './LogsScreen';
+import SwipesScreen from './SwipesScreen';
 import ProfileShowcaseScreen from './ProfileShowcaseScreen';
 import type {
   AlertLogEvent,
@@ -140,15 +143,36 @@ const SUGGESTION_CARD_BY_METRIC: Record<AdvisorAlertSlideKey, { badge: string; c
 
 /** Where “View More” sends the user (Insights detail for that signal). */
 const ADVISOR_VIEW_OPTIONS_INSIGHT_TAB: Record<AdvisorAlertSlideKey, InsightTab> = {
-  stress: 'Mindfulness',
-  glucose: 'Blood Glucose',
-  heartRate: 'Respiratory Rate',
+  stress: DASHBOARD_METRIC_INSIGHT_TAB['STRESS LEVEL'],
+  glucose: DASHBOARD_METRIC_INSIGHT_TAB.GLUCOSE,
+  heartRate: DASHBOARD_METRIC_INSIGHT_TAB['HEART RATE'],
 };
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
 const normalize = (value: number, min: number, max: number) => clamp((value - min) / (max - min), 0, 1);
 const isDefined = <T,>(value: T | null | undefined): value is T => value != null;
+
+/** True for actual sleep stages from Apple Health (not INBED / AWAKE). */
+function isAppleHealthAsleepSegment(value: string | undefined): boolean {
+  const v = (value ?? '').toUpperCase();
+  if (!v || v === 'INBED' || v === 'AWAKE') {
+    return false;
+  }
+  return v === 'ASLEEP' || v === 'CORE' || v === 'DEEP' || v === 'REM';
+}
+
+function sleepSampleMinutes(sample: { startDate?: string; endDate?: string; value?: string }): number {
+  if (!isAppleHealthAsleepSegment(sample.value)) {
+    return 0;
+  }
+  const start = sample.startDate ? new Date(sample.startDate).getTime() : 0;
+  const end = sample.endDate ? new Date(sample.endDate).getTime() : 0;
+  if (!start || !end || end <= start) {
+    return 0;
+  }
+  return (end - start) / (1000 * 60);
+}
 
 function buildInitialDriftModel(args: {
   stressValue: number;
@@ -256,6 +280,51 @@ function getNextDriftSnapshot(model: DemoDriftModel, fastMode: boolean) {
 export default function App() {
   const { width: windowWidth } = useWindowDimensions();
   const starredGalleryPageWidth = Math.max(0, windowWidth - 32);
+  /** Matches `styles.content` paddingHorizontal 16 + 16; header row lives inside that width. */
+  const dashboardContentInnerWidth = Math.max(0, windowWidth - 32);
+  /**
+   * Cap the left header cluster so “Good morning” cannot run under the fixed centered alert
+   * (`alertBlock` width 92, centered — do not change alert layout).
+   */
+  const dashboardHeaderLeftMaxWidth = useMemo(() => {
+    const half = dashboardContentInnerWidth / 2;
+    const alertHalfWidth = 46;
+    const gapFromAlert = 10;
+    return Math.max(88, Math.floor(half - alertHalfWidth - gapFromAlert));
+  }, [dashboardContentInnerWidth]);
+  /** Date stack type scale on narrow phones (header; centered alert unchanged). */
+  const dashboardHeaderDateTypography = useMemo(() => {
+    if (windowWidth <= 360) {
+      return {
+        datePrimaryFontSize: 12,
+        datePrimaryLineHeight: 16,
+        dateSecondaryFontSize: 11,
+        dateSecondaryLineHeight: 14,
+      };
+    }
+    if (windowWidth <= 390) {
+      return {
+        datePrimaryFontSize: 14,
+        datePrimaryLineHeight: 18,
+        dateSecondaryFontSize: 12,
+        dateSecondaryLineHeight: 15,
+      };
+    }
+    if (windowWidth <= 430) {
+      return {
+        datePrimaryFontSize: 15,
+        datePrimaryLineHeight: 19,
+        dateSecondaryFontSize: 14,
+        dateSecondaryLineHeight: 17,
+      };
+    }
+    return {
+      datePrimaryFontSize: 16,
+      datePrimaryLineHeight: 20,
+      dateSecondaryFontSize: 15,
+      dateSecondaryLineHeight: 19,
+    };
+  }, [windowWidth]);
   const mapViewRef = useRef<MapView | null>(null);
   const starredGalleryScrollRef = useRef<ScrollView | null>(null);
   const starredGalleryNextScrollAnimatedRef = useRef(false);
@@ -293,6 +362,30 @@ export default function App() {
   const [advisorGalleryShellLayout, setAdvisorGalleryShellLayout] = useState({ w: 0, h: 0 });
   const [advisorGalleryScrollX, setAdvisorGalleryScrollX] = useState(0);
   const advisorGalleryEdgeGid = useMemo(() => `ag-${Math.random().toString(36).slice(2, 10)}`, []);
+  const { layers, paletteId, setPaletteId, theme } = useDemoPalette();
+  /** ScrollView + tab stack need an explicit fill; RN often defaults that chrome to white. */
+  const canvasBg = getAppCanvasBackground(theme);
+  const svgNavDividerStroke = theme?.borderGlass ?? 'rgba(255,255,255,0.42)';
+  const svgAlertBellStroke = theme?.accent ?? '#eab308';
+  const gaugeStrokeDim = useMemo(() => (theme ? withAlpha(theme.textMuted, 0.52) : 'rgba(255,255,255,0.36)'), [theme]);
+  const gaugeStrokeFaint = useMemo(() => (theme ? withAlpha(theme.textMuted, 0.34) : 'rgba(255,255,255,0.24)'), [theme]);
+  const gaugeTickMajor = useMemo(() => (theme ? withAlpha(theme.textPrimary, 0.82) : 'rgba(255,255,255,0.75)'), [theme]);
+  const gaugeTickMinor = useMemo(() => (theme ? withAlpha(theme.textMuted, 0.55) : 'rgba(255,255,255,0.4)'), [theme]);
+  const gaugeScaleLabelFill = useMemo(() => (theme ? withAlpha(theme.textPrimary, 0.94) : '#f8fafc'), [theme]);
+  const gaugeNeedleFill = theme?.isLight ? theme.textPrimary : '#ffffff';
+  const inputPlaceholderColor = theme?.textMuted ?? '#64748b';
+  /** Mr. Chan carousel edge fades: must match canvas/card, not hardcoded slate (shows “black sides” on light palettes). */
+  const advisorGalleryFadeDark = useMemo(() => {
+    if (!theme) {
+      return '#020617';
+    }
+    if (theme.isLight) {
+      return mixHex(theme.screenBackground, theme.textPrimary, 0.12);
+    }
+    return mixHex(theme.screenBackground, '#000000', 0.42);
+  }, [theme]);
+  const advisorGalleryTopFade = useMemo(() => theme?.screenBackground ?? '#111827', [theme]);
+  const advisorGalleryHiStop = useMemo(() => (!theme ? '#f8fafc' : theme.isLight ? '#ffffff' : '#f8fafc'), [theme]);
   const [dismissedAdvisorSlideKeys, setDismissedAdvisorSlideKeys] = useState<Partial<Record<AdvisorAlertSlideKey, true>>>({});
   const [useDeviceLocation, setUseDeviceLocation] = useState(false);
   const [locationStatus, setLocationStatus] = useState<'off' | 'granted' | 'denied'>('off');
@@ -301,6 +394,8 @@ export default function App() {
   const [mapCoords, setMapCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [activeMapLayer, setActiveMapLayer] = useState<MapLayerFilter | null>('All');
   const [activeInsightTab, setActiveInsightTab] = useState<InsightTab | null>(null);
+  /** When set, Insights detail back returns to this main tab (e.g. Dashboard) instead of the Insights hub. */
+  const [insightDetailReturnTab, setInsightDetailReturnTab] = useState<string | null>(null);
   const [dashboardQuickMetrics, setDashboardQuickMetrics] = useState<InsightTab[]>(() =>
     QUICK_ACTION_METRIC_OPTIONS.slice(0, DASHBOARD_QUICK_ACTION_SLOTS),
   );
@@ -390,6 +485,7 @@ export default function App() {
   const [healthKitStatus, setHealthKitStatus] = useState<'idle' | 'ready' | 'denied' | 'unsupported'>('idle');
   const [healthKitLoading, setHealthKitLoading] = useState(false);
   const [healthKitLastError, setHealthKitLastError] = useState<string | null>(null);
+  const healthKitConnectInFlightRef = useRef(false);
   const [goalsTab, setGoalsTab] = useState<GoalsTab>('Communities');
   const [challengeFilter, setChallengeFilter] = useState<ChallengeFilter>('All');
   const [communitySearchQuery, setCommunitySearchQuery] = useState('');
@@ -425,8 +521,8 @@ export default function App() {
   const [weatherLabel, setWeatherLabel] = useState('Sunny');
   /** WMO code from Open-Meteo; drives header weather SVG. */
   const [weatherCode, setWeatherCode] = useState(0);
-  /** Bumps once per minute so the dashboard greeting can follow local time boundaries. */
-  const [greetingClockTick, setGreetingClockTick] = useState(0);
+  /** Bumps once per minute so the header date/time stay current. */
+  const [headerDateClockTick, setHeaderDateClockTick] = useState(0);
   const [foodSuggestionUnlocked, setFoodSuggestionUnlocked] = useState(false);
   const [foodSuggestionKind, setFoodSuggestionKind] = useState<AdvisorAlertSlideKey | null>(null);
   const [foodSuggestionBody, setFoodSuggestionBody] = useState('');
@@ -449,16 +545,18 @@ export default function App() {
   const stressNow = Math.round(stressValue);
   const heartRateNow = Math.round(heartRateCardValue);
   const scorePresentation = getScorePresentation(displayScore);
-  const dashboardGreeting = useMemo(() => {
-    const hour = new Date().getHours();
-    if (hour < 12) {
-      return 'Good Morning!';
-    }
-    if (hour < 17) {
-      return 'Good Afternoon!';
-    }
-    return 'Good Evening!';
-  }, [greetingClockTick]);
+  /** Stacked lines: calendar date (no weekday), then clock. */
+  const dashboardHeaderDateLines = useMemo(() => {
+    const now = new Date();
+    const monthDay = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+    // Keep year on the same line as the date (narrow header was wrapping after the comma).
+    const fullDate = `${monthDay},\u00a0${now.getFullYear()}`;
+    const timePart = now.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    return { fullDate, timePart };
+  }, [headerDateClockTick]);
   const allDemoToolsEnabled =
     demoScoreDriftEnabled && Object.values(demoDashboardValueDrift).every(Boolean);
   const highAlertCandidates: Array<DemoHighAlert | null> = [
@@ -559,57 +657,68 @@ export default function App() {
       water: next,
     });
   };
+  const openInsightFromDashboard = useCallback((tab: InsightTab) => {
+    setInsightDetailReturnTab('Dashboard');
+    setActiveTab('Insights');
+    setActiveInsightTab(tab);
+  }, []);
+
+  const openInsightFromInsightsHub = useCallback((tab: InsightTab) => {
+    setInsightDetailReturnTab(null);
+    setActiveInsightTab(tab);
+  }, []);
+
+  const handleInsightDetailBack = useCallback(() => {
+    if (insightDetailReturnTab) {
+      const returnTab = insightDetailReturnTab;
+      setActiveInsightTab(null);
+      setInsightDetailReturnTab(null);
+      setActiveTab(returnTab);
+      return;
+    }
+    setActiveInsightTab(null);
+  }, [insightDetailReturnTab]);
+
+  const handleMainNavPress = useCallback(
+    (label: string) => {
+      if (label === 'Insights') {
+        setActiveInsightTab(null);
+        setInsightDetailReturnTab(null);
+      } else {
+        setActiveInsightTab(null);
+        setInsightDetailReturnTab(null);
+      }
+      setActiveTab(label);
+    },
+    [],
+  );
+
   const dashboardMetrics = [
     {
-      label: 'GLUCOSE',
+      label: 'GLUCOSE' as const,
+      insightTab: DASHBOARD_METRIC_INSIGHT_TAB.GLUCOSE,
       value: Math.round(glucoseValue).toString(),
       unit: 'MG/DL',
       status: glucoseValue >= 170 ? 'HIGH' : glucoseValue <= 85 ? 'LOW' : 'NORMAL',
       statusColor: glucoseValue >= 170 ? '#ef4444' : glucoseValue <= 85 ? '#f59e0b' : '#7CB89B',
     },
     {
-      label: 'STRESS LEVEL',
+      label: 'STRESS LEVEL' as const,
+      insightTab: DASHBOARD_METRIC_INSIGHT_TAB['STRESS LEVEL'],
       value: Math.round(stressValue).toString(),
       unit: '/100',
       status: stressValue >= 70 ? 'HIGH' : stressValue <= 35 ? 'LOW' : 'NORMAL',
       statusColor: stressValue >= 70 ? '#f97316' : stressValue <= 35 ? '#7DA2C7' : '#7CB89B',
     },
     {
-      label: 'HEART RATE',
+      label: 'HEART RATE' as const,
+      insightTab: DASHBOARD_METRIC_INSIGHT_TAB['HEART RATE'],
       value: Math.round(heartRateCardValue).toString(),
       unit: 'BPM',
       status: heartRateCardValue >= 95 ? 'HIGH' : heartRateCardValue <= 52 ? 'LOW' : 'NORMAL',
       statusColor: heartRateCardValue >= 95 ? '#f59e0b' : heartRateCardValue <= 52 ? '#7DA2C7' : '#7CB89B',
     },
   ];
-  const sleepMinutesForDisplay = Math.min(activitySleepMinutes, 9 * 60 + 59);
-  const dashboardActivity = [
-    {
-      label: 'STEPS',
-      value: activitySteps.toLocaleString(),
-      fill: Math.max(8, Math.min(100, Math.round((activitySteps / 8000) * 100))),
-      color: '#7CB89B',
-    },
-    {
-      label: 'SLEEP',
-      value: `${Math.floor(sleepMinutesForDisplay / 60)}h ${String(sleepMinutesForDisplay % 60).padStart(2, '0')}m`,
-      fill: Math.max(8, Math.min(100, Math.round((sleepMinutesForDisplay / (8 * 60)) * 100))),
-      color: '#9B8FC6',
-    },
-    {
-      label: 'MEDS',
-      value: `${activityMedsTaken}/2`,
-      fill: Math.max(8, Math.min(100, Math.round((activityMedsTaken / 2) * 100))),
-      color: '#7DA2C7',
-    },
-    {
-      label: 'WATER',
-      value: `${activityWaterGlasses}gl`,
-      fill: Math.max(8, Math.min(100, Math.round((activityWaterGlasses / 8) * 100))),
-      color: '#C7A77D',
-    },
-  ];
-
   /** Same HIGH bands as alert push content: glucose ≥170, stress ≥70, heart rate ≥95. */
   const advisorSlides = useMemo((): AdvisorSlide[] => {
     const slides: AdvisorSlide[] = [];
@@ -706,27 +815,8 @@ export default function App() {
   const rightX = baseCenterX - perpX * arrowHalfWidth;
   const rightY = baseCenterY - perpY * arrowHalfWidth;
 
-  const resolveEventProvider = (event: CommunityEventItem): 'ticketmaster' | 'eventbrite' | 'unknown' => {
-    const src = (event.source ?? '').trim().toLowerCase();
-    if (src === 'ticketmaster' || src === 'eventbrite') {
-      return src;
-    }
-    const url = (event.sourceUrl ?? '').toLowerCase();
-    if (url.includes('eventbrite')) {
-      return 'eventbrite';
-    }
-    if (url.includes('ticketmaster')) {
-      return 'ticketmaster';
-    }
-    return 'unknown';
-  };
-
-  const providerPinsFromEvents = (events: CommunityEventItem[], source: 'ticketmaster' | 'eventbrite' | 'both'): MapScreenPin[] => {
-    const list =
-      source === 'both'
-        ? events
-        : events.filter((e) => resolveEventProvider(e) === source);
-    return list
+  const discoveryPinsFromEvents = (events: CommunityEventItem[]): MapScreenPin[] =>
+    events
       .filter(
         (e) =>
           typeof e.latitude === 'number' &&
@@ -739,8 +829,6 @@ export default function App() {
           e.longitude <= 180,
       )
       .map((e) => {
-        const provider = resolveEventProvider(e);
-        const pinColor = provider === 'eventbrite' ? '#f97316' : '#0ea5e9';
         const locationLine = (e.address ?? e.meta ?? '').trim();
         const venueLine = e.venue?.trim()
           ? locationLine
@@ -748,16 +836,15 @@ export default function App() {
             : e.venue.trim()
           : locationLine || ' ';
         return {
-          id: `evt-${provider}-${e.id}`,
+          id: `evt-${e.id}`,
           latitude: e.latitude as number,
           longitude: e.longitude as number,
           title: (e.title && String(e.title).trim()) || 'Event',
           subtitle: venueLine || ' ',
-          pinColor,
+          pinColor: '#0ea5e9',
           linkedEvent: e,
         };
       });
-  };
   const fixedMapPins: MapScreenPin[] = [
     {
       id: 'landmark-pauley-pavilion',
@@ -770,15 +857,9 @@ export default function App() {
   ];
 
   const mapRecommendations: MapScreenPin[] =
-    mapCoords == null
+    mapCoords == null || activeMapLayer == null
       ? []
-      : activeMapLayer == null
-        ? []
-        : activeMapLayer === 'All'
-          ? [...providerPinsFromEvents(mapDiscoveryEvents, 'both'), ...fixedMapPins]
-          : activeMapLayer === 'Ticketmaster'
-            ? [...providerPinsFromEvents(mapDiscoveryEvents, 'ticketmaster'), ...fixedMapPins]
-            : [...providerPinsFromEvents(mapDiscoveryEvents, 'eventbrite'), ...fixedMapPins];
+      : [...discoveryPinsFromEvents(mapDiscoveryEvents), ...fixedMapPins];
   const recenterMapToCurrentLocation = async () => {
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
@@ -1021,8 +1102,12 @@ export default function App() {
       [communityName]: [optimisticPost, ...(prev[communityName] ?? [])],
     }));
     try {
-      const cloudinaryResult = await uploadImageToCloudinary(createPostImageUri);
-      const mediaVariants = buildCloudinaryImageVariants(cloudinaryResult.publicId, cloudinaryResult.secureUrl);
+      const localImageUri = createPostImageUri;
+      const mediaVariants = {
+        originalUrl: localImageUri,
+        feedUrl: localImageUri,
+        thumbUrl: localImageUri,
+      };
       const preferredCoords = locationCoords ?? mapCoords;
       const aristaContext = preferredCoords
         ? await fetchAristaContext({
@@ -1032,17 +1117,19 @@ export default function App() {
             communityId: toShareSlug(communityName),
           })
         : null;
-      const imageHints = cloudinaryResult.publicId
+      const imageName =
+        localImageUri.split('/').pop() ?? `post-${Date.now()}.jpg`;
+      const imageHints = imageName
         .split(/[/_-]+/)
         .map((part) => part.trim())
         .filter((part) => part.length >= 3)
         .slice(0, 6);
-      const zeticResult = await generateProgressPostMetadata({
+      const heuristics = buildProgressPostHeuristics({
         caption: resolvedCaption,
         aristaContext,
         imageHints,
       });
-      const postedCaption = buildProgressPostDisplayCaption(zeticResult.autoDescription, zeticResult.autoTags);
+      const postedCaption = buildProgressPostDisplayCaption(heuristics.autoDescription, heuristics.autoTags);
       const db = getFirestoreInstance();
       let firestoreWriteError: string | null = null;
       if (db) {
@@ -1053,8 +1140,8 @@ export default function App() {
           authorId: 'demo-user',
           authorName: 'You',
           caption: resolvedCaption,
-          mediaUrl: cloudinaryResult.secureUrl,
-          mediaPublicId: cloudinaryResult.publicId,
+          mediaUrl: localImageUri,
+          mediaPublicId: null,
           mediaVariants,
           mediaType: 'image',
           status: 'processing',
@@ -1069,12 +1156,9 @@ export default function App() {
           await updateDoc(docRef, {
             status: 'ready',
             caption: postedCaption,
-            autoDescription: zeticResult.autoDescription,
-            autoTags: zeticResult.autoTags,
-            eventContext: zeticResult.useEventContext ? (aristaContext?.event ?? null) : null,
-            zeticConfidence: zeticResult.confidence,
-            zeticSource: zeticResult.source,
-            zeticError: zeticResult.error,
+            autoDescription: heuristics.autoDescription,
+            autoTags: heuristics.autoTags,
+            eventContext: heuristics.useEventContext ? (aristaContext?.event ?? null) : null,
             updatedAt: serverTimestamp(),
           });
         } catch (error) {
@@ -1084,10 +1168,10 @@ export default function App() {
       updateCommunityPost(communityName, localPostId, {
         caption: postedCaption,
         imageLabel: firestoreWriteError
-          ? 'Uploaded photo (cloud only)'
+          ? 'Saved metadata (image local)'
           : 'Uploaded progress photo',
         imageUrl: mediaVariants.feedUrl,
-        mediaPublicId: cloudinaryResult.publicId,
+        mediaPublicId: null,
         mediaVariants,
         status: 'ready',
         processingError: firestoreWriteError,
@@ -1096,7 +1180,10 @@ export default function App() {
       setCreatePostCaption('');
       setCreatePostImageUri(null);
       if (!hasFirebaseConfig) {
-        Alert.alert('Local-only mode', 'Post uploaded to Cloudinary. Add EXPO_PUBLIC_FIREBASE_* vars to also write Firestore records.');
+        Alert.alert(
+          'Local-only mode',
+          'Photo stays on device. Add EXPO_PUBLIC_FIREBASE_* vars to also write Firestore records.',
+        );
       }
     } catch (error) {
       updateCommunityPost(communityName, localPostId, {
@@ -1152,10 +1239,6 @@ export default function App() {
       ],
     );
   };
-
-  useEffect(() => {
-    void preloadZeticModel();
-  }, []);
 
   useEffect(() => {
     const loadCommunityEvents = async () => {
@@ -1229,47 +1312,45 @@ export default function App() {
         return;
       }
 
-      const readPermissions = healthKit.Constants.Permissions;
+      const readPermissions = healthKit.Constants.Permissions as Record<string, string>;
+      const read = buildInsightsHealthKitReadPermissions(readPermissions);
+      if (read.length === 0) {
+        setHealthKitStatus('unsupported');
+        setHealthKitLastError('Could not resolve HealthKit read types for Insights.');
+        return;
+      }
       const permissions = {
         permissions: {
-          read: [
-            readPermissions.HeartRate,
-            readPermissions.RestingHeartRate,
-            readPermissions.HeartRateVariability,
-            readPermissions.RespiratoryRate,
-            readPermissions.OxygenSaturation,
-            readPermissions.StepCount,
-            readPermissions.DistanceWalkingRunning,
-            readPermissions.FlightsClimbed,
-            readPermissions.SleepAnalysis,
-            readPermissions.ActiveEnergyBurned,
-            readPermissions.BasalEnergyBurned,
-            readPermissions.AppleExerciseTime,
-            readPermissions.AppleStandTime,
-            readPermissions.MindfulSession,
-            readPermissions.BodyTemperature,
-            readPermissions.Weight,
-            readPermissions.Vo2Max,
-            readPermissions.BloodGlucose,
-          ].filter(Boolean),
+          read,
           write: [],
         },
       };
 
-      let initErrorMessage: unknown = null;
-      const initialized = await new Promise<boolean>((resolve) => {
-        healthKit.initHealthKit?.(permissions, (error?: unknown) => {
-          initErrorMessage = error ?? null;
-          resolve(!error);
+      /** Authorization dialog + `initHealthKit` only on first connect — not on every trend-window change. */
+      const alreadyAuthorized = healthKitStatus === 'ready';
+      if (!alreadyAuthorized) {
+        let initErrorMessage: unknown = null;
+        const initialized = await new Promise<boolean>((resolve) => {
+          try {
+            healthKit.initHealthKit?.(permissions, (error?: unknown) => {
+              initErrorMessage = error ?? null;
+              resolve(!error);
+            });
+          } catch (e) {
+            initErrorMessage = e;
+            resolve(false);
+          }
         });
-      });
 
-      if (!initialized) {
-        const readableError = toErrorText(initErrorMessage ?? 'HealthKit authorization failed.');
-        setHealthKitStatus('denied');
-        setHealthKitLastError(readableError);
-        Alert.alert('Apple Health connection failed', readableError);
-        return;
+        if (!initialized) {
+          const readableError = toErrorText(initErrorMessage ?? 'HealthKit authorization failed.');
+          await setHealthKitLinked(false);
+          setHealthKitStatus('denied');
+          setHealthKitLastError(readableError);
+          Alert.alert('Apple Health connection failed', readableError);
+          return;
+        }
+        await setHealthKitLinked(true);
       }
 
       const now = new Date();
@@ -1395,19 +1476,19 @@ export default function App() {
       let sleepTrendPoints = new Array(bucketLen).fill(0);
       let activeEnergyTrendPoints = new Array(bucketLen).fill(0);
       let mindfulnessTrendPoints = new Array(bucketLen).fill(0);
-      let restingHeartRateTrendPoints = zeroSeries();
-      let hrvTrendPoints = zeroSeries();
-      let respiratoryTrendPoints = zeroSeries();
-      let bloodOxygenTrendPoints = zeroSeries();
-      let distanceTrendPoints = zeroSeries();
-      let flightsTrendPoints = zeroSeries();
-      let basalEnergyTrendPoints = zeroSeries();
-      let exerciseTimeTrendPoints = zeroSeries();
-      let standTimeTrendPoints = zeroSeries();
-      let bodyTemperatureTrendPoints = zeroSeries();
-      let weightTrendPoints = zeroSeries();
-      let vo2MaxTrendPoints = zeroSeries();
-      let bloodGlucoseTrendPoints = zeroSeries();
+      let restingHeartRateTrendPoints: number[];
+      let hrvTrendPoints: number[];
+      let respiratoryTrendPoints: number[];
+      let bloodOxygenTrendPoints: number[];
+      let distanceTrendPoints: number[];
+      let flightsTrendPoints: number[];
+      let basalEnergyTrendPoints: number[];
+      let exerciseTimeTrendPoints: number[];
+      let standTimeTrendPoints: number[];
+      let bodyTemperatureTrendPoints: number[];
+      let weightTrendPoints: number[];
+      let vo2MaxTrendPoints: number[];
+      let bloodGlucoseTrendPoints: number[];
 
       if (healthKit.getLatestHeartRate) {
         await new Promise<void>((resolve) => {
@@ -1461,27 +1542,27 @@ export default function App() {
         });
       }
       if (healthKit.getStepCount) {
-        const stepResults: number[] = [];
-        for (const date of bucketDates) {
-          // eslint-disable-next-line no-await-in-loop
-          await new Promise<void>((resolve) => {
-            const rangeStart = new Date(date);
-            const rangeEnd = new Date(date);
-            rangeEnd.setDate(rangeEnd.getDate() + 1);
-            const isToday = toDayKey(date) === toDayKey(dayStart);
-            healthKit.getStepCount?.(
-              {
-                date: date.toISOString(),
-                startDate: rangeStart.toISOString(),
-                endDate: isToday ? now.toISOString() : rangeEnd.toISOString(),
-              },
-              (_error, result) => {
-                stepResults.push(Math.round(result?.value ?? 0));
-                resolve();
-              },
-            );
-          });
-        }
+        const stepResults = await Promise.all(
+          bucketDates.map(
+            (date) =>
+              new Promise<number>((resolve) => {
+                const rangeStart = new Date(date);
+                const rangeEnd = new Date(date);
+                rangeEnd.setDate(rangeEnd.getDate() + 1);
+                const isToday = toDayKey(date) === toDayKey(dayStart);
+                healthKit.getStepCount?.(
+                  {
+                    date: date.toISOString(),
+                    startDate: rangeStart.toISOString(),
+                    endDate: isToday ? now.toISOString() : rangeEnd.toISOString(),
+                  },
+                  (_error, result) => {
+                    resolve(Math.round(result?.value ?? 0));
+                  },
+                );
+              }),
+          ),
+        );
         stepTrendPoints = stepResults;
         stepCountValue = stepResults[stepResults.length - 1] ?? 0;
         stepCountPrevious = stepResults[stepResults.length - 2] ?? 0;
@@ -1497,51 +1578,44 @@ export default function App() {
               const samples = result ?? [];
               const sleepByDay = new Map<string, number>();
               samples.forEach((sample) => {
-                const value = sample.value?.toLowerCase() ?? '';
-                if (!value.includes('asleep')) {
+                const minutes = sleepSampleMinutes(sample);
+                if (minutes <= 0) {
                   return;
                 }
-                const start = sample.startDate ? new Date(sample.startDate).getTime() : 0;
                 const end = sample.endDate ? new Date(sample.endDate).getTime() : 0;
-                if (!start || !end || end <= start) {
-                  return;
-                }
                 const key = toDayKey(new Date(end));
-                const prev = sleepByDay.get(key) ?? 0;
-                sleepByDay.set(key, prev + (end - start) / (1000 * 60));
+                sleepByDay.set(key, (sleepByDay.get(key) ?? 0) + minutes);
               });
               sleepTrendPoints = bucketDates.map((d) => Number(((sleepByDay.get(toDayKey(d)) ?? 0) / 60).toFixed(1)));
 
               const midpoint = new Date(dayStart);
               midpoint.setDate(midpoint.getDate() - 7);
               const currentMinutes = samples.reduce((acc, sample) => {
-                const value = sample.value?.toLowerCase() ?? '';
-                if (!value.includes('asleep')) {
+                const minutes = sleepSampleMinutes(sample);
+                if (minutes <= 0) {
                   return acc;
                 }
-                const start = sample.startDate ? new Date(sample.startDate).getTime() : 0;
                 const end = sample.endDate ? new Date(sample.endDate).getTime() : 0;
-                if (!start || !end || end <= start || end < midpoint.getTime()) {
+                if (end < midpoint.getTime()) {
                   return acc;
                 }
-                return acc + (end - start) / (1000 * 60);
+                return acc + minutes;
               }, 0);
-              const totalMinutes = samples.reduce((acc, sample) => {
-                const value = sample.value?.toLowerCase() ?? '';
-                if (!value.includes('asleep')) {
-                  return acc;
-                }
-                const start = sample.startDate ? new Date(sample.startDate).getTime() : 0;
-                const end = sample.endDate ? new Date(sample.endDate).getTime() : 0;
-                if (!start || !end || end <= start) {
-                  return acc;
-                }
-                return acc + (end - start) / (1000 * 60);
-              }, 0);
+              const totalMinutes = samples.reduce((acc, sample) => acc + sleepSampleMinutes(sample), 0);
               const previousMinutes = totalMinutes - currentMinutes;
 
               sleepHours = Number((currentMinutes / 60 / 7).toFixed(1));
               sleepHoursPrevious = Number((previousMinutes / 60 / 7).toFixed(1));
+
+              const yesterdayForSleep = new Date(dayStart);
+              yesterdayForSleep.setDate(yesterdayForSleep.getDate() - 1);
+              const recentNightMinutes = Math.max(
+                sleepByDay.get(toDayKey(now)) ?? 0,
+                sleepByDay.get(toDayKey(yesterdayForSleep)) ?? 0,
+              );
+              if (recentNightMinutes > 0) {
+                setActivitySleepMinutes(Math.round(Math.min(recentNightMinutes, 9 * 60 + 59)));
+              }
               resolve();
             },
           );
@@ -1624,73 +1698,89 @@ export default function App() {
         endDate: now.toISOString(),
       };
 
-      restingHeartRateTrendPoints = await loadSeriesFromSamples(healthKit.getRestingHeartRateSamples, baseRange, 'avg');
-      hrvTrendPoints = await loadSeriesFromSamples(healthKit.getHeartRateVariabilitySamples, baseRange, 'avg');
-      respiratoryTrendPoints = await loadSeriesFromSamples(healthKit.getRespiratoryRateSamples, baseRange, 'avg');
-      bloodOxygenTrendPoints = await loadSeriesFromSamples(
-        healthKit.getOxygenSaturationSamples,
-        baseRange,
-        'avg',
-        (v) => (v <= 1 ? v * 100 : v),
-      );
-      distanceTrendPoints = await loadSeriesFromSamples(
-        healthKit.getDailyDistanceWalkingRunningSamples,
-        {
-          ...baseRange,
-          unit: healthKit.Constants?.Units?.mile ?? 'mile',
-        },
-        'sum',
-      );
-      flightsTrendPoints = await loadSeriesFromSamples(healthKit.getDailyFlightsClimbedSamples, baseRange, 'sum');
-      basalEnergyTrendPoints = await loadSeriesFromSamples(
-        healthKit.getBasalEnergyBurned,
-        {
-          ...baseRange,
-          unit: healthKit.Constants?.Units?.kcal ?? 'kcal',
-        },
-        'sum',
-      );
-      exerciseTimeTrendPoints = await loadSeriesFromSamples(
-        healthKit.getAppleExerciseTime,
-        {
-          ...baseRange,
-          unit: healthKit.Constants?.Units?.minute ?? 'minute',
-        },
-        'sum',
-      );
-      standTimeTrendPoints = await loadSeriesFromSamples(
-        healthKit.getAppleStandTime,
-        {
-          ...baseRange,
-          unit: healthKit.Constants?.Units?.minute ?? 'minute',
-        },
-        'sum',
-      );
-      bodyTemperatureTrendPoints = await loadSeriesFromSamples(
-        healthKit.getBodyTemperatureSamples,
-        {
-          ...baseRange,
-          unit: healthKit.Constants?.Units?.fahrenheit ?? 'fahrenheit',
-        },
-        'avg',
-      );
-      weightTrendPoints = await loadSeriesFromSamples(
-        healthKit.getWeightSamples,
-        {
-          ...baseRange,
-          unit: healthKit.Constants?.Units?.pound ?? 'pound',
-        },
-        'avg',
-      );
-      vo2MaxTrendPoints = await loadSeriesFromSamples(healthKit.getVo2MaxSamples, baseRange, 'avg');
-      bloodGlucoseTrendPoints = await loadSeriesFromSamples(
-        healthKit.getBloodGlucoseSamples,
-        {
-          ...baseRange,
-          unit: healthKit.Constants?.Units?.mgPerdL ?? 'mgPerdL',
-        },
-        'avg',
-      );
+      [
+        restingHeartRateTrendPoints,
+        hrvTrendPoints,
+        respiratoryTrendPoints,
+        bloodOxygenTrendPoints,
+        distanceTrendPoints,
+        flightsTrendPoints,
+        basalEnergyTrendPoints,
+        exerciseTimeTrendPoints,
+        standTimeTrendPoints,
+        bodyTemperatureTrendPoints,
+        weightTrendPoints,
+        vo2MaxTrendPoints,
+        bloodGlucoseTrendPoints,
+      ] = await Promise.all([
+        loadSeriesFromSamples(healthKit.getRestingHeartRateSamples, baseRange, 'avg'),
+        loadSeriesFromSamples(healthKit.getHeartRateVariabilitySamples, baseRange, 'avg'),
+        loadSeriesFromSamples(healthKit.getRespiratoryRateSamples, baseRange, 'avg'),
+        loadSeriesFromSamples(
+          healthKit.getOxygenSaturationSamples,
+          baseRange,
+          'avg',
+          (v) => (v <= 1 ? v * 100 : v),
+        ),
+        loadSeriesFromSamples(
+          healthKit.getDailyDistanceWalkingRunningSamples,
+          {
+            ...baseRange,
+            unit: healthKit.Constants?.Units?.mile ?? 'mile',
+          },
+          'sum',
+        ),
+        loadSeriesFromSamples(healthKit.getDailyFlightsClimbedSamples, baseRange, 'sum'),
+        loadSeriesFromSamples(
+          healthKit.getBasalEnergyBurned,
+          {
+            ...baseRange,
+            unit: healthKit.Constants?.Units?.kcal ?? 'kcal',
+          },
+          'sum',
+        ),
+        loadSeriesFromSamples(
+          healthKit.getAppleExerciseTime,
+          {
+            ...baseRange,
+            unit: healthKit.Constants?.Units?.minute ?? 'minute',
+          },
+          'sum',
+        ),
+        loadSeriesFromSamples(
+          healthKit.getAppleStandTime,
+          {
+            ...baseRange,
+            unit: healthKit.Constants?.Units?.minute ?? 'minute',
+          },
+          'sum',
+        ),
+        loadSeriesFromSamples(
+          healthKit.getBodyTemperatureSamples,
+          {
+            ...baseRange,
+            unit: healthKit.Constants?.Units?.fahrenheit ?? 'fahrenheit',
+          },
+          'avg',
+        ),
+        loadSeriesFromSamples(
+          healthKit.getWeightSamples,
+          {
+            ...baseRange,
+            unit: healthKit.Constants?.Units?.pound ?? 'pound',
+          },
+          'avg',
+        ),
+        loadSeriesFromSamples(healthKit.getVo2MaxSamples, baseRange, 'avg'),
+        loadSeriesFromSamples(
+          healthKit.getBloodGlucoseSamples,
+          {
+            ...baseRange,
+            unit: healthKit.Constants?.Units?.mgPerdL ?? 'mgPerdL',
+          },
+          'avg',
+        ),
+      ]);
 
       setInsightContentByTab({
         'Heart Rate': {
@@ -1752,7 +1842,7 @@ export default function App() {
           trendUnit: 'steps',
         },
         'Walking + Running Distance': {
-          title: 'Walking + Running Distance',
+          title: insightTabLabel('Walking + Running Distance'),
           summary: `${latest(distanceTrendPoints).toFixed(2)} mi today`,
           trend: formatTrend(latest(distanceTrendPoints), previous(distanceTrendPoints), ' mi'),
           recommendation: 'Steady distance growth usually follows small daily consistency.',
@@ -1862,9 +1952,11 @@ export default function App() {
           trendUnit: 'mg/dL',
         },
       });
+      await setHealthKitLinked(true);
       setHealthKitStatus('ready');
     } catch (error) {
       const errorMessage = toErrorText(error);
+      await setHealthKitLinked(false);
       setHealthKitStatus('denied');
       setHealthKitLastError(errorMessage);
       Alert.alert('Apple Health connection failed', errorMessage);
@@ -1897,15 +1989,53 @@ export default function App() {
           // Ignore startup permission failures; user can retry in feature flows.
         }
       }
-      if (!cancelled) {
-        void initHealthKitAsync('7d');
-      }
+      /** Apple Health is requested when the user opens Insights (see HealthKit auto-connect effect). */
     }
     void requestStartupPermissions();
     return () => {
       cancelled = true;
     };
   }, [startupPermissionsRequested]);
+
+  /** iOS: request HealthKit in context (Insights tab), once per OS grant; reconnect silently on return visits. */
+  useEffect(() => {
+    if (activeTab !== 'Insights' || Platform.OS !== 'ios') {
+      return;
+    }
+    if (healthKitStatus === 'ready' || healthKitStatus === 'denied' || healthKitStatus === 'unsupported') {
+      return;
+    }
+    if (healthKitLoading || healthKitConnectInFlightRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+    const interaction = InteractionManager.runAfterInteractions(() => {
+      if (cancelled || healthKitConnectInFlightRef.current) {
+        return;
+      }
+      healthKitConnectInFlightRef.current = true;
+      void (async () => {
+        try {
+          const previouslyLinked = await getHealthKitLinked();
+          if (cancelled) {
+            return;
+          }
+          if (previouslyLinked) {
+            setHealthKitLastError(null);
+          }
+          await initHealthKitAsync(insightTrendWindow);
+        } finally {
+          healthKitConnectInFlightRef.current = false;
+        }
+      })();
+    });
+
+    return () => {
+      cancelled = true;
+      interaction.cancel();
+    };
+  }, [activeTab, healthKitStatus, healthKitLoading, insightTrendWindow]);
 
   useEffect(() => {
     if (!useDeviceLocation) {
@@ -1975,7 +2105,7 @@ export default function App() {
 
   useEffect(() => {
     const id = setInterval(() => {
-      setGreetingClockTick((n) => n + 1);
+      setHeaderDateClockTick((n) => n + 1);
     }, 60 * 1000);
     return () => clearInterval(id);
   }, []);
@@ -2178,13 +2308,6 @@ export default function App() {
   }, [goalsTab]);
 
   useEffect(() => {
-    if (activeTab !== 'Insights' || healthKitStatus === 'ready' || healthKitLoading) {
-      return;
-    }
-    void initHealthKitAsync(insightTrendWindow);
-  }, [activeTab, healthKitStatus, healthKitLoading]);
-
-  useEffect(() => {
     if (selectedJoinedCommunityName == null) {
       setSelectedCommunityAction('Progress Board');
       setEventsTab('Upcoming');
@@ -2245,17 +2368,17 @@ export default function App() {
   }, [activeTab]);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.gridOverlay} />
-      <View style={styles.topGlow} />
-      <StatusBar style="light" />
-      <View style={{ flex: 1 }}>
+    <View style={mergePaletteLayer(layers, 'container', styles.container)}>
+      <View style={mergePaletteLayer(layers, 'gridOverlay', styles.gridOverlay)} />
+      <View style={mergePaletteLayer(layers, 'topGlow', styles.topGlow)} />
+      <StatusBar style={theme?.isLight ? 'dark' : 'light'} />
+      <View style={{ flex: 1, backgroundColor: canvasBg }}>
         {/* Dashboard stays mounted so local assets (e.g. chanmoji) are not torn down on every tab switch. */}
                       <View
           collapsable={false}
           pointerEvents={activeTab === 'Dashboard' ? 'auto' : 'none'}
                                       style={[
-            styles.tabStackLayer,
+            mergePaletteLayer(layers, 'tabStackLayer', styles.tabStackLayer),
             {
               opacity: activeTab === 'Dashboard' ? 1 : 0,
               zIndex: activeTab === 'Dashboard' ? 2 : 0,
@@ -2263,7 +2386,13 @@ export default function App() {
           ]}
         >
         <>
-        <ScrollView bounces={false} contentContainerStyle={styles.content} overScrollMode="never" showsVerticalScrollIndicator={false}>
+        <ScrollView
+          bounces={false}
+          style={{ flex: 1, backgroundColor: canvasBg }}
+          contentContainerStyle={mergePaletteLayer(layers, 'content', styles.content)}
+          overScrollMode="never"
+          showsVerticalScrollIndicator={false}
+        >
         <View style={styles.header}>
           <TouchableOpacity
             hitSlop={{ top: 14, right: 14, left: 14, bottom: 6 }}
@@ -2275,14 +2404,14 @@ export default function App() {
                 <Path
                   d="M9 8h4l3-3h16l3 3h4l3 4v11l-3 3h-4l-2 2H15l-2-2H9l-3-3V12l3-4zm7 4c-4 0-7 3-7 7s3 7 7 7h16c4 0 7-3 7-7s-3-7-7-7H16zm7 2h6v3h-6v-3z"
                   fill="none"
-                  stroke="#eab308"
+                  stroke={svgAlertBellStroke}
                   strokeWidth={2.2}
                 />
               </Svg>
               {alertCount > 0 ? (
                 <Animated.View
                   style={[
-                    styles.alertBadge,
+                    mergePaletteLayer(layers, 'alertBadge', styles.alertBadge),
                     {
                       transform: [
                         {
@@ -2305,25 +2434,66 @@ export default function App() {
                 </Animated.View>
               ) : null}
             </View>
-            <Text style={styles.alertText}>{alertCount > 0 ? `${alertCount} Alerts` : 'No alerts'}</Text>
+            <Text style={mergePaletteLayer(layers, 'alertText', styles.alertText)}>
+              {alertCount > 0 ? `${alertCount} Alerts` : 'No alerts'}
+            </Text>
           </TouchableOpacity>
-          <View style={styles.headerLeft}>
+          <View style={[styles.headerLeft, { maxWidth: dashboardHeaderLeftMaxWidth }]}>
             <TouchableOpacity onPress={() => setSidebarOpen(true)} style={styles.menuBtn}>
-              <View style={styles.menuLine} />
-              <View style={styles.menuLine} />
-              <View style={styles.menuLine} />
+              <View style={mergePaletteLayer(layers, 'menuLine', styles.menuLine)} />
+              <View style={mergePaletteLayer(layers, 'menuLine', styles.menuLine)} />
+              <View style={mergePaletteLayer(layers, 'menuLine', styles.menuLine)} />
             </TouchableOpacity>
-            <View>
-                  <Text style={styles.greeting}>{dashboardGreeting}</Text>
-              <Text style={styles.date}>April 24, 2026 • Friday</Text>
+            <View style={styles.headerGreetingColumn}>
+              <View style={styles.headerDateStack}>
+                <Text
+                  adjustsFontSizeToFit={Platform.OS === 'ios'}
+                  ellipsizeMode="tail"
+                  minimumFontScale={Platform.OS === 'ios' ? 0.85 : 1}
+                  numberOfLines={1}
+                  style={mergePaletteLayer(
+                    layers,
+                    'date',
+                    styles.date,
+                    styles.headerDateLine,
+                    {
+                      fontSize: dashboardHeaderDateTypography.datePrimaryFontSize,
+                      lineHeight: dashboardHeaderDateTypography.datePrimaryLineHeight,
+                    },
+                  )}
+                >
+                  {dashboardHeaderDateLines.fullDate}
+                </Text>
+                <Text
+                  adjustsFontSizeToFit={Platform.OS === 'ios'}
+                  ellipsizeMode="tail"
+                  minimumFontScale={Platform.OS === 'ios' ? 0.9 : 1}
+                  numberOfLines={1}
+                  style={mergePaletteLayer(
+                    layers,
+                    'dateTimeSub',
+                    styles.date,
+                    styles.dateTimeSub,
+                    styles.headerDateLine,
+                    {
+                      fontSize: dashboardHeaderDateTypography.dateSecondaryFontSize,
+                      lineHeight: dashboardHeaderDateTypography.dateSecondaryLineHeight,
+                    },
+                  )}
+                >
+                  {dashboardHeaderDateLines.timePart}
+                </Text>
+              </View>
             </View>
           </View>
           <View style={styles.weatherBlock}>
-            <View style={styles.weatherTopRow}>
-                  <WeatherIcon size={36} weatherCode={weatherCode} />
-              <Text style={styles.weatherText}>{weatherF}°F</Text>
+            <View style={styles.weatherStack}>
+              <View style={styles.weatherTopRow}>
+                <WeatherIcon size={36} weatherCode={weatherCode} />
+                <Text style={mergePaletteLayer(layers, 'weatherText', styles.weatherText)}>{weatherF}°F</Text>
+              </View>
+              <Text style={mergePaletteLayer(layers, 'weatherSubText', styles.weatherSubText)}>{weatherLabel}</Text>
             </View>
-            <Text style={styles.weatherSubText}>{weatherLabel}</Text>
           </View>
         </View>
         <View style={styles.scoreCard}>
@@ -2342,10 +2512,10 @@ export default function App() {
                 </LinearGradient>
               </Defs>
                   <Path d={arcPath(138, -4, 104, 1)} fill="none" stroke="url(#outerGradA)" strokeLinecap="round" strokeWidth={1.6} />
-                  <Path d="M -40 22 C 0 22 22 22 44 22 C 68 22 84 19 102 14 C 114 10 120 8 126 8" fill="none" stroke="rgba(255,255,255,0.36)" strokeLinecap="round" strokeWidth={1.35} />
-                  <Path d="M 194 8 C 200 8 206 10 218 14 C 236 19 252 22 276 22 C 298 22 320 22 360 22" fill="none" stroke="rgba(255,255,255,0.36)" strokeLinecap="round" strokeWidth={1.35} />
-                  <Path d="M -36 38 C 8 38 30 38 50 38 C 74 38 92 34 110 30 C 120 26 126 24 132 24" fill="none" stroke="rgba(255,255,255,0.24)" strokeLinecap="round" strokeWidth={1.05} />
-                  <Path d="M 188 24 C 194 24 200 26 210 30 C 228 34 246 38 270 38 C 290 38 312 38 356 38" fill="none" stroke="rgba(255,255,255,0.24)" strokeLinecap="round" strokeWidth={1.05} />
+                  <Path d="M -40 22 C 0 22 22 22 44 22 C 68 22 84 19 102 14 C 114 10 120 8 126 8" fill="none" stroke={gaugeStrokeDim} strokeLinecap="round" strokeWidth={1.35} />
+                  <Path d="M 194 8 C 200 8 206 10 218 14 C 236 19 252 22 276 22 C 298 22 320 22 360 22" fill="none" stroke={gaugeStrokeDim} strokeLinecap="round" strokeWidth={1.35} />
+                  <Path d="M -36 38 C 8 38 30 38 50 38 C 74 38 92 34 110 30 C 120 26 126 24 132 24" fill="none" stroke={gaugeStrokeFaint} strokeLinecap="round" strokeWidth={1.05} />
+                  <Path d="M 188 24 C 194 24 200 26 210 30 C 228 34 246 38 270 38 C 290 38 312 38 356 38" fill="none" stroke={gaugeStrokeFaint} strokeLinecap="round" strokeWidth={1.05} />
               {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90].map((startPct, idx) => {
                 const endPct = startPct + 9;
                     const colors = ['#ef4444', '#f4511e', '#fb6200', '#f98b00', '#f2b000', '#eab308', '#d0c400', '#a4d400', '#6edf00', '#22c55e'];
@@ -2362,24 +2532,59 @@ export default function App() {
                 const tickLength = major ? 12 : 6;
                 const x2 = centerX + Math.cos(angle) * (106 + tickLength);
                 const y2 = centerY - Math.sin(angle) * (106 + tickLength);
-                    return <Path key={`tick-${mark}`} d={`M ${x1} ${y1} L ${x2} ${y2}`} fill="none" stroke={major ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.4)'} strokeLinecap="round" strokeWidth={major ? 2.6 : 1.15} />;
+                    return (
+                      <Path
+                        key={`tick-${mark}`}
+                        d={`M ${x1} ${y1} L ${x2} ${y2}`}
+                        fill="none"
+                        stroke={major ? gaugeTickMajor : gaugeTickMinor}
+                        strokeLinecap="round"
+                        strokeWidth={major ? 2.6 : 1.15}
+                      />
+                    );
               })}
-              <Path d={`M ${tipX} ${tipY} L ${leftX} ${leftY} L ${rightX} ${rightY} Z`} fill="#ffffff" />
-                  <SvgText fill="#f8fafc" fontSize="13" fontWeight="700" x={pointOnArc(118, 0).x + 8} y={pointOnArc(118, 0).y - 10}>0</SvgText>
-                  <SvgText fill="#f8fafc" fontSize="13" fontWeight="700" textAnchor="end" x={pointOnArc(118, 100).x - 8} y={pointOnArc(118, 100).y - 10}>100</SvgText>
+              <Path d={`M ${tipX} ${tipY} L ${leftX} ${leftY} L ${rightX} ${rightY} Z`} fill={gaugeNeedleFill} />
+                  <SvgText fill={gaugeScaleLabelFill} fontSize="16" fontWeight="700" x={pointOnArc(118, 0).x + 8} y={pointOnArc(118, 0).y - 10}>
+                    0
+                  </SvgText>
+                  <SvgText fill={gaugeScaleLabelFill} fontSize="16" fontWeight="700" textAnchor="end" x={pointOnArc(118, 100).x - 8} y={pointOnArc(118, 100).y - 10}>
+                    100
+                  </SvgText>
                 </Svg>
               </View>
               <Animated.Text style={[styles.scoreHeart, { opacity: heartPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.75, 1] }), transform: [{ scale: heartPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.08] }) }] }]}>♥</Animated.Text>
-              <Text style={styles.scoreLabel}>HEALTH SCORE</Text>
-              <View style={styles.scoreRow}><Text style={styles.score}>{displayScore}</Text><Text style={styles.scoreUnit}>/100</Text></View>
+              <Text style={mergePaletteLayer(layers, 'scoreLabel', styles.scoreLabel)}>HEALTH SCORE</Text>
+              <View style={styles.scoreRow}>
+                <Text style={mergePaletteLayer(layers, 'score', styles.score)}>{displayScore}</Text>
+                <Text style={mergePaletteLayer(layers, 'scoreUnit', styles.scoreUnit)}>/100</Text>
+              </View>
               <Text style={[styles.scoreState, scorePresentation.band === 'good' ? styles.scoreStateGood : scorePresentation.band === 'poor' ? styles.scoreStatePoor : null]}>{scorePresentation.label}</Text>
-              <Text style={styles.scoreSub}>{scorePresentation.subtitle}</Text>
+              <Text style={mergePaletteLayer(layers, 'scoreSub', styles.scoreSub)}>{scorePresentation.subtitle}</Text>
             </View>
-            <View style={styles.grid}>{dashboardMetrics.map((item) => (<View key={item.label} style={styles.glassCard}><Text style={styles.metricLabel}>{item.label}</Text><View style={styles.metricValueRow}><Text style={styles.metricValue}>{item.value}</Text><Text style={styles.metricUnit}>{item.unit}</Text></View><Text style={[styles.metricStatus, { color: item.statusColor }]}>{item.status}</Text></View>))}</View>
+            <View style={styles.grid}>
+              {dashboardMetrics.map((item) => (
+                <TouchableOpacity
+                  key={item.label}
+                  accessibilityHint={`Opens ${insightTabLabel(item.insightTab)} in Insights`}
+                  accessibilityLabel={`${item.label}, ${item.value} ${item.unit}, ${item.status}`}
+                  accessibilityRole="button"
+                  activeOpacity={0.82}
+                  onPress={() => openInsightFromDashboard(item.insightTab)}
+                  style={mergePaletteLayer(layers, 'glassCard', styles.glassCard)}
+                >
+                  <Text style={mergePaletteLayer(layers, 'metricLabel', styles.metricLabel)}>{item.label}</Text>
+                  <View style={styles.metricValueRow}>
+                    <Text style={mergePaletteLayer(layers, 'metricValue', styles.metricValue)}>{item.value}</Text>
+                    <Text style={mergePaletteLayer(layers, 'metricUnit', styles.metricUnit)}>{item.unit}</Text>
+                  </View>
+                  <Text style={[styles.metricStatus, { color: item.statusColor }]}>{item.status}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
             <View style={styles.neuralAdvisorSection}>
-              <View style={styles.neuralAdvisorDivider} />
+              <View style={mergePaletteLayer(layers, 'neuralAdvisorDivider', styles.neuralAdvisorDivider)} />
               <View style={styles.neuralAdvisorInner}>
-                <Text style={styles.cardBadge}>NEURAL AI ADVISOR</Text>
+                <Text style={mergePaletteLayer(layers, 'neuralAdvisorBadge', styles.cardBadge)}>NEURAL AI ADVISOR</Text>
                 <View style={styles.advisorCardBody}>
                   <Image fadeDuration={0} resizeMode="contain" source={require('../../assets/chanmoji.png')} style={styles.advisorImage} />
                   <View
@@ -2391,7 +2596,7 @@ export default function App() {
                       }
                     }}
                   >
-                    <Text style={styles.cardTitle}>Mr. Chan</Text>
+                    <Text style={mergePaletteLayer(layers, 'cardTitle', styles.cardTitle)}>Mr. Chan</Text>
                     <View
                       style={styles.neuralAdvisorGalleryShell}
                       onLayout={(e) => {
@@ -2410,24 +2615,24 @@ export default function App() {
                           <Svg height={advisorGalleryShellLayout.h} width={advisorGalleryShellLayout.w}>
                             <Defs>
                               <LinearGradient id={`${advisorGalleryEdgeGid}-L`} x1="0" y1="0" x2="1" y2="0">
-                                <Stop offset="0" stopColor="#020617" stopOpacity="0.34" />
-                                <Stop offset="0.55" stopColor="#020617" stopOpacity="0.1" />
-                                <Stop offset="1" stopColor="#020617" stopOpacity="0" />
+                                <Stop offset="0" stopColor={advisorGalleryFadeDark} stopOpacity="0.34" />
+                                <Stop offset="0.55" stopColor={advisorGalleryFadeDark} stopOpacity="0.1" />
+                                <Stop offset="1" stopColor={advisorGalleryFadeDark} stopOpacity="0" />
                               </LinearGradient>
                               <LinearGradient id={`${advisorGalleryEdgeGid}-R`} x1="1" y1="0" x2="0" y2="0">
-                                <Stop offset="0" stopColor="#020617" stopOpacity="0.34" />
-                                <Stop offset="0.55" stopColor="#020617" stopOpacity="0.1" />
-                                <Stop offset="1" stopColor="#020617" stopOpacity="0" />
+                                <Stop offset="0" stopColor={advisorGalleryFadeDark} stopOpacity="0.34" />
+                                <Stop offset="0.55" stopColor={advisorGalleryFadeDark} stopOpacity="0.1" />
+                                <Stop offset="1" stopColor={advisorGalleryFadeDark} stopOpacity="0" />
                               </LinearGradient>
                               <LinearGradient id={`${advisorGalleryEdgeGid}-HL`} x1="0" y1="0" x2="1" y2="0">
-                                <Stop offset="0" stopColor="#f8fafc" stopOpacity="0.07" />
-                                <Stop offset="0.4" stopColor="#f8fafc" stopOpacity="0.02" />
-                                <Stop offset="1" stopColor="#f8fafc" stopOpacity="0" />
+                                <Stop offset="0" stopColor={advisorGalleryHiStop} stopOpacity="0.07" />
+                                <Stop offset="0.4" stopColor={advisorGalleryHiStop} stopOpacity="0.02" />
+                                <Stop offset="1" stopColor={advisorGalleryHiStop} stopOpacity="0" />
                               </LinearGradient>
                               <LinearGradient id={`${advisorGalleryEdgeGid}-HR`} x1="1" y1="0" x2="0" y2="0">
-                                <Stop offset="0" stopColor="#f8fafc" stopOpacity="0.07" />
-                                <Stop offset="0.4" stopColor="#f8fafc" stopOpacity="0.02" />
-                                <Stop offset="1" stopColor="#f8fafc" stopOpacity="0" />
+                                <Stop offset="0" stopColor={advisorGalleryHiStop} stopOpacity="0.07" />
+                                <Stop offset="0.4" stopColor={advisorGalleryHiStop} stopOpacity="0.02" />
+                                <Stop offset="1" stopColor={advisorGalleryHiStop} stopOpacity="0" />
                               </LinearGradient>
                             </Defs>
                             <Rect
@@ -2502,8 +2707,8 @@ export default function App() {
                           >
           <Text
             style={[
-                                styles.advisorGallerySlideText,
-                                slide.key === 'steady' && styles.advisorGallerySlideTextSteady,
+              mergePaletteLayer(layers, 'advisorGallerySlideText', styles.advisorGallerySlideText),
+              slide.key === 'steady' && mergePaletteLayer(layers, 'advisorGallerySlideTextSteady', styles.advisorGallerySlideTextSteady),
             ]}
           >
                               {slide.message}
@@ -2528,18 +2733,15 @@ export default function App() {
                                       if (advisorSuggestionRequestRef.current !== req) {
                                         return;
                                       }
-                                      console.log('[Zetic advisor] UI:applied', {
-                                        source: result.source,
-                                        error: result.error,
-                                        bodyChars: result.body.length,
-                                      });
                                       setFoodSuggestionBody(result.body);
                                       setFoodSuggestionGenerating(false);
                                     });
                                   }}
-                                  style={styles.advisorGalleryPrimaryBtn}
+                                  style={mergePaletteLayer(layers, 'advisorGalleryPrimaryBtn', styles.advisorGalleryPrimaryBtn)}
                                 >
-                                  <Text style={styles.advisorGalleryPrimaryBtnText}>Suggestions</Text>
+                                  <Text style={mergePaletteLayer(layers, 'advisorGalleryPrimaryBtnText', styles.advisorGalleryPrimaryBtnText)}>
+                                    Suggestions
+                                  </Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
                                   onPress={() => {
@@ -2551,9 +2753,11 @@ export default function App() {
                                     });
                                     setDismissedAdvisorSlideKeys((prev) => ({ ...prev, [slide.key]: true }));
                                   }}
-                                  style={styles.advisorGallerySecondaryBtn}
+                                  style={mergePaletteLayer(layers, 'advisorGallerySecondaryBtn', styles.advisorGallerySecondaryBtn)}
                                 >
-                                  <Text style={styles.advisorGallerySecondaryBtnText}>Not Now</Text>
+                                  <Text style={mergePaletteLayer(layers, 'advisorGallerySecondaryBtnText', styles.advisorGallerySecondaryBtnText)}>
+                                    Not Now
+                                  </Text>
                                 </TouchableOpacity>
         </View>
                             ) : null}
@@ -2565,14 +2769,14 @@ export default function App() {
                           <Svg height={advisorGalleryShellLayout.h} width={advisorGalleryShellLayout.w}>
                             <Defs>
                               <LinearGradient id={`${advisorGalleryEdgeGid}-TF-L`} x1="0" y1="0" x2="1" y2="0">
-                                <Stop offset="0" stopColor="#111827" stopOpacity="1" />
-                                <Stop offset="0.38" stopColor="#111827" stopOpacity="0.45" />
-                                <Stop offset="1" stopColor="#111827" stopOpacity="0" />
+                                <Stop offset="0" stopColor={advisorGalleryTopFade} stopOpacity="1" />
+                                <Stop offset="0.38" stopColor={advisorGalleryTopFade} stopOpacity="0.45" />
+                                <Stop offset="1" stopColor={advisorGalleryTopFade} stopOpacity="0" />
                               </LinearGradient>
                               <LinearGradient id={`${advisorGalleryEdgeGid}-TF-R`} x1="1" y1="0" x2="0" y2="0">
-                                <Stop offset="0" stopColor="#111827" stopOpacity="1" />
-                                <Stop offset="0.38" stopColor="#111827" stopOpacity="0.45" />
-                                <Stop offset="1" stopColor="#111827" stopOpacity="0" />
+                                <Stop offset="0" stopColor={advisorGalleryTopFade} stopOpacity="1" />
+                                <Stop offset="0.38" stopColor={advisorGalleryTopFade} stopOpacity="0.45" />
+                                <Stop offset="1" stopColor={advisorGalleryTopFade} stopOpacity="0" />
                               </LinearGradient>
                             </Defs>
                             <Rect
@@ -2598,7 +2802,10 @@ export default function App() {
                         {advisorSlides.map((slide, idx) => (
                           <View
                             key={`advisor-gallery-dot-${slide.key}`}
-                            style={[styles.advisorGalleryPagerDot, idx === advisorGalleryIndex && styles.advisorGalleryPagerDotActive]}
+                            style={[
+                              mergePaletteLayer(layers, 'advisorGalleryPagerDot', styles.advisorGalleryPagerDot),
+                              idx === advisorGalleryIndex && mergePaletteLayer(layers, 'advisorGalleryPagerDotActive', styles.advisorGalleryPagerDotActive),
+                            ]}
                           />
           ))}
         </View>
@@ -2606,12 +2813,17 @@ export default function App() {
           </View>
         </View>
               </View>
-              <View style={styles.neuralAdvisorDivider} />
+              <View style={mergePaletteLayer(layers, 'neuralAdvisorDivider', styles.neuralAdvisorDivider)} />
             </View>
             {foodSuggestionUnlocked && foodSuggestionKind ? (
-        <View style={[styles.glassCardLarge, styles.foodCard]}>
+        <View
+          style={[
+            mergePaletteLayer(layers, 'glassCardLarge', styles.glassCardLarge),
+            mergePaletteLayer(layers, 'foodCard', styles.foodCard),
+          ]}
+        >
           <View style={styles.foodCardHeader}>
-                  <Text style={[styles.cardBadge, { color: '#EAB308' }]}>
+                  <Text style={mergePaletteLayer(layers, 'cardBadge', styles.cardBadge)}>
                     {SUGGESTION_CARD_BY_METRIC[foodSuggestionKind].badge}
                   </Text>
                   <TouchableOpacity
@@ -2625,22 +2837,22 @@ export default function App() {
                       setFoodSuggestionBody('');
                       setFoodSuggestionGenerating(false);
                     }}
-                    style={styles.foodToggleBtn}
+                    style={mergePaletteLayer(layers, 'foodToggleBtn', styles.foodToggleBtn)}
                   >
-                    <Text style={styles.foodToggleGlyph}>×</Text>
+                    <Text style={mergePaletteLayer(layers, 'foodToggleGlyph', styles.foodToggleGlyph)}>×</Text>
             </TouchableOpacity>
           </View>
                 <View style={styles.foodCardBodyRow}>
                   <View style={styles.foodCardBodyText}>
                     {foodSuggestionGenerating ? (
                       <View style={styles.foodCardGeneratingRow}>
-                        <ActivityIndicator color="#a1a1aa" size="small" />
-                        <Text style={[styles.cardText, styles.foodCardGeneratingLabel]}>
+                        <ActivityIndicator color={theme?.textMuted ?? '#a1a1aa'} size="small" />
+                        <Text style={mergePaletteLayer(layers, 'cardText', styles.cardText, styles.foodCardGeneratingLabel)}>
                           Generating a personalized tip on-edge…
                         </Text>
                       </View>
                     ) : (
-                      <Text style={styles.cardText}>{foodSuggestionBody}</Text>
+                      <Text style={mergePaletteLayer(layers, 'cardText', styles.cardText)}>{foodSuggestionBody}</Text>
                     )}
                   </View>
                   {foodSuggestionGenerating ? null : (
@@ -2648,26 +2860,24 @@ export default function App() {
                       accessibilityHint="Opens the matching metric in Insights"
                       accessibilityLabel={`${SUGGESTION_CARD_BY_METRIC[foodSuggestionKind].cta} for ${SUGGESTION_CARD_BY_METRIC[foodSuggestionKind].badge}`}
                       accessibilityRole="button"
-                      onPress={() => {
-                        setActiveTab('Insights');
-                        setActiveInsightTab(ADVISOR_VIEW_OPTIONS_INSIGHT_TAB[foodSuggestionKind]);
-                      }}
-                      style={styles.foodBtn}
+                      onPress={() => openInsightFromDashboard(ADVISOR_VIEW_OPTIONS_INSIGHT_TAB[foodSuggestionKind])}
+                      style={mergePaletteLayer(layers, 'foodBtn', styles.foodBtn)}
                     >
-                      <Text style={styles.foodBtnText}>{SUGGESTION_CARD_BY_METRIC[foodSuggestionKind].cta}</Text>
+                      <Text style={mergePaletteLayer(layers, 'foodBtnText', styles.foodBtnText)}>
+                        {SUGGESTION_CARD_BY_METRIC[foodSuggestionKind].cta}
+                      </Text>
               </TouchableOpacity>
                   )}
         </View>
               </View>
             ) : null}
-        <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
-            <DashboardQuickActionMetricsRow metrics={dashboardQuickMetrics} onMetricPress={(metric) => { setActiveTab('Insights'); setActiveInsightTab(metric); }} onReorder={setDashboardQuickMetrics} />
-            <View style={styles.activityContainer}>{dashboardActivity.map((item, index) => (<View key={item.label} style={styles.activityItem}><View style={styles.activityTopRow}><ActivityMiniIcon label={item.label} /><View style={styles.activityTextStack}><Text style={styles.activityLabel}>{item.label}</Text><Text style={styles.activityValue}>{item.value}</Text></View></View><View style={styles.activityTrack}><View style={[styles.activityFill, { flex: item.fill, backgroundColor: item.color }]} /><View style={[styles.activityTrackRemainder, { flex: 100 - item.fill }]} /></View>{index < dashboardActivity.length - 1 ? <View style={styles.activityDivider} /> : null}</View>))}</View>
+        <Text style={mergePaletteLayer(layers, 'sectionLabel', styles.sectionLabel)}>QUICK ACTIONS</Text>
+            <DashboardQuickActionMetricsRow metrics={dashboardQuickMetrics} onMetricPress={openInsightFromDashboard} onReorder={setDashboardQuickMetrics} />
           </ScrollView>
         </>
         </View>
         {activeTab === 'Map' ? (
-          <View collapsable={false} style={[styles.tabStackLayer, { zIndex: 2 }]}>
+          <View collapsable={false} style={[mergePaletteLayer(layers, 'tabStackLayer', styles.tabStackLayer), { zIndex: 2 }]}>
             <MapScreen
               activeMapLayer={activeMapLayer}
               mapCoords={mapCoords}
@@ -2682,7 +2892,7 @@ export default function App() {
           </View>
         ) : null}
         {activeTab === 'Insights' ? (
-          <View collapsable={false} style={[styles.tabStackLayer, { zIndex: 2 }]}>
+          <View collapsable={false} style={[mergePaletteLayer(layers, 'tabStackLayer', styles.tabStackLayer), { zIndex: 2 }]}>
             <InsightsScreen
               activeInsightTab={activeInsightTab}
               dashboardQuickMetrics={dashboardQuickMetrics}
@@ -2705,7 +2915,8 @@ export default function App() {
               }}
               quickMetricSearchQuery={quickMetricSearchQuery}
               selectedInsightContent={selectedInsightContent}
-              setActiveInsightTab={setActiveInsightTab}
+              onInsightDetailBack={handleInsightDetailBack}
+              onOpenInsightTab={openInsightFromInsightsHub}
               setExpandedInsightGroups={setExpandedInsightGroups}
               setHealthKitStatus={setHealthKitStatus}
               setQuickMetricSearchQuery={setQuickMetricSearchQuery}
@@ -2721,7 +2932,7 @@ export default function App() {
                 </View>
         ) : null}
         {activeTab === 'Goals' ? (
-          <View collapsable={false} style={[styles.tabStackLayer, { zIndex: 2 }]}>
+          <View collapsable={false} style={[mergePaletteLayer(layers, 'tabStackLayer', styles.tabStackLayer), { zIndex: 2 }]}>
             <GoalsScreen
               challengeFilter={challengeFilter}
               communitySearchQuery={communitySearchQuery}
@@ -2760,29 +2971,29 @@ export default function App() {
             />
               </View>
         ) : null}
-        {activeTab === 'Alert logs' ? (
-          <View collapsable={false} style={[styles.tabStackLayer, { zIndex: 2 }]}>
-            <LogsScreen events={alertEventLog} />
+        {activeTab === 'Swipes' ? (
+          <View collapsable={false} style={[mergePaletteLayer(layers, 'tabStackLayer', styles.tabStackLayer), { zIndex: 2 }]}>
+            <SwipesScreen />
           </View>
         ) : null}
             </View>
 
-      <View style={styles.bottomNav}>
+      <View style={mergePaletteLayer(layers, 'bottomNav', styles.bottomNav)}>
         <Svg pointerEvents="none" style={styles.navDividerSvg} viewBox="0 0 390 18">
           <Path
             d="M0 14 C 14 14 22 8 34 2 L356 2 C 368 8 376 14 390 14"
             fill="none"
-            stroke="rgba(255,255,255,0.42)"
+            stroke={svgNavDividerStroke}
             strokeLinecap="round"
             strokeWidth={1.2}
           />
         </Svg>
         {NAV_ITEMS.map((item: { label: string; icon: string }) => (
-          <TouchableOpacity key={item.label} onPress={() => setActiveTab(item.label)} style={styles.navItem}>
+          <TouchableOpacity key={item.label} onPress={() => handleMainNavPress(item.label)} style={styles.navItem}>
             {item.label === 'Dashboard' && alertCount > 0 ? (
               <Animated.View
                 style={[
-                  styles.navAlertBadge,
+                  mergePaletteLayer(layers, 'navAlertBadge', styles.navAlertBadge),
                   {
                     transform: [
                       {
@@ -2807,9 +3018,23 @@ export default function App() {
             {item.label === 'Insights' ? (
               <InsightsBulbIcon active={activeTab === item.label} />
             ) : (
-              <Text style={[styles.navIcon, activeTab === item.label && styles.navActive]}>{item.icon}</Text>
+              <Text
+                style={[
+                  mergePaletteLayer(layers, 'navIcon', styles.navIcon),
+                  activeTab === item.label && mergePaletteLayer(layers, 'navActive', styles.navActive),
+                ]}
+              >
+                {item.icon}
+              </Text>
             )}
-            <Text style={[styles.navText, activeTab === item.label && styles.navActive]}>{item.label}</Text>
+            <Text
+              style={[
+                mergePaletteLayer(layers, 'navText', styles.navText),
+                activeTab === item.label && mergePaletteLayer(layers, 'navActive', styles.navActive),
+              ]}
+            >
+              {item.label}
+            </Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -2820,31 +3045,31 @@ export default function App() {
         visible={showCreatePersonalChallengeModal}
         onRequestClose={() => setShowCreatePersonalChallengeModal(false)}
       >
-        <Pressable onPress={() => setShowCreatePersonalChallengeModal(false)} style={styles.challengeModalBackdrop}>
-          <Pressable onPress={() => {}} style={styles.challengeModalCard}>
-            <Text style={styles.challengeModalTitle}>Create Personal Challenge</Text>
-            <Text style={styles.challengeModalHint}>Add a challenge just for you.</Text>
+        <Pressable onPress={() => setShowCreatePersonalChallengeModal(false)} style={mergePaletteLayer(layers, 'challengeModalBackdrop', styles.challengeModalBackdrop)}>
+          <Pressable onPress={() => {}} style={mergePaletteLayer(layers, 'challengeModalCard', styles.challengeModalCard)}>
+            <Text style={mergePaletteLayer(layers, 'challengeModalTitle', styles.challengeModalTitle)}>Create Personal Challenge</Text>
+            <Text style={mergePaletteLayer(layers, 'challengeModalHint', styles.challengeModalHint)}>Add a challenge just for you.</Text>
             <TextInput
               onChangeText={setNewChallengeTitle}
               placeholder="Challenge title"
-              placeholderTextColor="#64748b"
-              style={styles.challengeInput}
+              placeholderTextColor={inputPlaceholderColor}
+              style={mergePaletteLayer(layers, 'challengeInput', styles.challengeInput)}
               value={newChallengeTitle}
             />
             <TextInput
               multiline
               onChangeText={setNewChallengeDetail}
               placeholder="Challenge details"
-              placeholderTextColor="#64748b"
-              style={[styles.challengeInput, styles.challengeInputMultiline]}
+              placeholderTextColor={inputPlaceholderColor}
+              style={mergePaletteLayer(layers, 'challengeInput', styles.challengeInput, styles.challengeInputMultiline)}
               value={newChallengeDetail}
             />
             <View style={styles.challengeModalActions}>
-              <TouchableOpacity onPress={() => setShowCreatePersonalChallengeModal(false)} style={styles.challengeModalCancelBtn}>
-                <Text style={styles.challengeModalCancelText}>Cancel</Text>
+              <TouchableOpacity onPress={() => setShowCreatePersonalChallengeModal(false)} style={mergePaletteLayer(layers, 'challengeModalCancelBtn', styles.challengeModalCancelBtn)}>
+                <Text style={mergePaletteLayer(layers, 'challengeModalCancelText', styles.challengeModalCancelText)}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={createPersonalChallenge} style={styles.challengeModalCreateBtn}>
-                <Text style={styles.challengeModalCreateText}>Create</Text>
+              <TouchableOpacity onPress={createPersonalChallenge} style={mergePaletteLayer(layers, 'challengeModalCreateBtn', styles.challengeModalCreateBtn)}>
+                <Text style={mergePaletteLayer(layers, 'challengeModalCreateText', styles.challengeModalCreateText)}>Create</Text>
               </TouchableOpacity>
             </View>
           </Pressable>
@@ -2857,15 +3082,15 @@ export default function App() {
         visible={showCreateProgressPostModal}
         onRequestClose={() => setShowCreateProgressPostModal(false)}
       >
-        <Pressable onPress={() => setShowCreateProgressPostModal(false)} style={styles.challengeModalBackdrop}>
+        <Pressable onPress={() => setShowCreateProgressPostModal(false)} style={mergePaletteLayer(layers, 'challengeModalBackdrop', styles.challengeModalBackdrop)}>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
             style={styles.createPostKeyboardAvoiding}
           >
-            <Pressable onPress={Keyboard.dismiss} style={styles.challengeModalCard}>
-              <Text style={styles.challengeModalTitle}>Create Progress Post</Text>
-              <Text style={styles.challengeModalHint}>Upload a photo and caption your update.</Text>
+            <Pressable onPress={Keyboard.dismiss} style={mergePaletteLayer(layers, 'challengeModalCard', styles.challengeModalCard)}>
+              <Text style={mergePaletteLayer(layers, 'challengeModalTitle', styles.challengeModalTitle)}>Create Progress Post</Text>
+              <Text style={mergePaletteLayer(layers, 'challengeModalHint', styles.challengeModalHint)}>Upload a photo and caption your update.</Text>
               {createPostImageUri ? (
                 <Image resizeMode="cover" source={{ uri: createPostImageUri }} style={styles.createPostPreviewImage} />
               ) : null}
@@ -2873,24 +3098,24 @@ export default function App() {
                 multiline
                 onChangeText={setCreatePostCaption}
                 placeholder="What progress did you make today?"
-                placeholderTextColor="#64748b"
-                style={[styles.challengeInput, styles.challengeInputMultiline]}
+                placeholderTextColor={inputPlaceholderColor}
+                style={mergePaletteLayer(layers, 'challengeInput', styles.challengeInput, styles.challengeInputMultiline)}
                 value={createPostCaption}
               />
               <View style={styles.challengeModalActions}>
                 <TouchableOpacity
                   disabled={isPublishingProgressPost}
                   onPress={() => setShowCreateProgressPostModal(false)}
-                  style={styles.challengeModalCancelBtn}
+                  style={mergePaletteLayer(layers, 'challengeModalCancelBtn', styles.challengeModalCancelBtn)}
                 >
-                  <Text style={styles.challengeModalCancelText}>Cancel</Text>
+                  <Text style={mergePaletteLayer(layers, 'challengeModalCancelText', styles.challengeModalCancelText)}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   disabled={isPublishingProgressPost}
                   onPress={createProgressPost}
-                  style={styles.challengeModalCreateBtn}
+                  style={mergePaletteLayer(layers, 'challengeModalCreateBtn', styles.challengeModalCreateBtn)}
                 >
-                  <Text style={styles.challengeModalCreateText}>
+                  <Text style={mergePaletteLayer(layers, 'challengeModalCreateText', styles.challengeModalCreateText)}>
                     {isPublishingProgressPost ? 'Publishing...' : 'Publish'}
                   </Text>
                 </TouchableOpacity>
@@ -2906,32 +3131,20 @@ export default function App() {
         visible={showAlertsScreen}
         onRequestClose={() => setShowAlertsScreen(false)}
       >
-        <View style={styles.alertsModalBackdrop}>
-          <View style={styles.alertsModalCard}>
+        <View style={mergePaletteLayer(layers, 'alertsModalBackdrop', styles.alertsModalBackdrop)}>
+          <View style={mergePaletteLayer(layers, 'alertsModalCard', styles.alertsModalCard)}>
             <View style={styles.alertsModalHeader}>
-              <TouchableOpacity onPress={() => setShowAlertsScreen(false)} style={styles.alertsBackBtn}>
-                <Ionicons name="chevron-back" size={20} color="#f8fafc" />
+              <TouchableOpacity onPress={() => setShowAlertsScreen(false)} style={mergePaletteLayer(layers, 'alertsBackBtn', styles.alertsBackBtn)}>
+                <Ionicons name="chevron-back" size={20} color={theme?.textPrimary ?? '#f8fafc'} />
               </TouchableOpacity>
               <View style={styles.alertsHeaderTextWrap}>
-                <Text style={styles.alertsTitle}>Alerts</Text>
-                <Text style={styles.alertsSubtitle}>Health notifications</Text>
+                <Text style={mergePaletteLayer(layers, 'alertsTitle', styles.alertsTitle)}>Alert logs</Text>
+                <Text style={mergePaletteLayer(layers, 'alertsSubtitle', styles.alertsSubtitle)}>Session timeline</Text>
               </View>
             </View>
-            {alertItems.length === 0 ? (
-              <View style={styles.alertsEmptyCard}>
-                <Text style={styles.alertsEmptyText}>No new alerts</Text>
-              </View>
-            ) : (
-              <ScrollView bounces={false} overScrollMode="never" showsVerticalScrollIndicator={false}>
-                {alertItems.map((alert) => (
-                  <View key={alert.id} style={styles.alertsCard}>
-                    <Text style={styles.alertsCardTitle}>{alert.title}</Text>
-                    <Text style={styles.alertsCardDetail}>{alert.detail}</Text>
-                    <Text style={styles.alertsCardSeverity}>{alert.severity}</Text>
-                  </View>
-                ))}
-              </ScrollView>
-            )}
+            <View style={{ flex: 1, minHeight: 0 }}>
+              <LogsScreen events={alertEventLog} omitHeading />
+            </View>
           </View>
         </View>
       </Modal>
@@ -2947,11 +3160,11 @@ export default function App() {
 
       {sidebarOpen ? (
         <View style={styles.sidebarOverlay}>
-          <View style={styles.sidebarPanel}>
+          <View style={mergePaletteLayer(layers, 'sidebarPanel', styles.sidebarPanel)}>
             <View style={styles.sidebarHeader}>
-              <Text style={styles.sidebarTitle}>Menu</Text>
+              <Text style={mergePaletteLayer(layers, 'sidebarTitle', styles.sidebarTitle)}>Menu</Text>
               <TouchableOpacity onPress={() => setSidebarOpen(false)}>
-                <Text style={styles.sidebarClose}>×</Text>
+                <Text style={mergePaletteLayer(layers, 'sidebarClose', styles.sidebarClose)}>×</Text>
               </TouchableOpacity>
             </View>
             <TouchableOpacity
@@ -2961,15 +3174,53 @@ export default function App() {
                 setShowProfileScreen(true);
               }}
             >
-              <Text style={styles.sidebarItemText}>Profile</Text>
+              <Text style={mergePaletteLayer(layers, 'sidebarItemText', styles.sidebarItemText)}>Profile</Text>
             </TouchableOpacity>
-            <View style={styles.sidebarDivider} />
-            <Text style={styles.sidebarSectionTitle}>Demo Tools</Text>
+            <View style={mergePaletteLayer(layers, 'sidebarDivider', styles.sidebarDivider)} />
+            <Text style={mergePaletteLayer(layers, 'sidebarSectionTitle', styles.sidebarSectionTitle)}>Color palette</Text>
+            {DEMO_PALETTE_CHOICES.map((choice) => {
+              const selected = paletteId === choice.id;
+              return (
+                <TouchableOpacity
+                  key={choice.id}
+                  onPress={() => setPaletteId(choice.id)}
+                  style={mergePaletteLayer(
+                    layers,
+                    selected ? 'demoPaletteRowActive' : 'demoPaletteRow',
+                    styles.demoPaletteRow,
+                    selected ? styles.demoPaletteRowActive : null,
+                  )}
+                >
+                  <Text style={mergePaletteLayer(layers, 'demoPaletteRowLabel', styles.demoPaletteRowLabel)}>{choice.label}</Text>
+                  <View style={styles.demoPaletteSwatches}>
+                    {choice.swatches ? (
+                      choice.swatches.map((hex) => (
+                        <View key={hex} style={[styles.demoPaletteSwatchDot, { backgroundColor: hex }]} />
+                      ))
+                    ) : (
+                      <Text style={mergePaletteLayer(layers, 'demoPaletteRowHint', styles.demoPaletteRowHint)}>As designed</Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+            <View style={mergePaletteLayer(layers, 'sidebarDivider', styles.sidebarDivider)} />
+            <Text style={mergePaletteLayer(layers, 'sidebarSectionTitle', styles.sidebarSectionTitle)}>Demo Tools</Text>
             <TouchableOpacity onPress={toggleAllDemoTools} style={styles.demoToggleRow}>
-              <Text style={styles.demoToggleLabel}>All Demo Tools</Text>
+              <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>All Demo Tools</Text>
               <View style={styles.demoToggleRowRight}>
-                <View style={[styles.demoTogglePill, allDemoToolsEnabled && styles.demoTogglePillActive]}>
-                  <Text style={[styles.demoTogglePillText, allDemoToolsEnabled && styles.demoTogglePillTextActive]}>
+                <View
+                  style={[
+                    mergePaletteLayer(layers, 'demoTogglePill', styles.demoTogglePill),
+                    allDemoToolsEnabled && mergePaletteLayer(layers, 'demoTogglePillActive', styles.demoTogglePillActive),
+                  ]}
+                >
+                  <Text
+                    style={[
+                      mergePaletteLayer(layers, 'demoTogglePillText', styles.demoTogglePillText),
+                      allDemoToolsEnabled && mergePaletteLayer(layers, 'demoTogglePillTextActive', styles.demoTogglePillTextActive),
+                    ]}
+                  >
                     {allDemoToolsEnabled ? 'ON' : 'OFF'}
                   </Text>
                 </View>
@@ -2978,24 +3229,46 @@ export default function App() {
                     event.stopPropagation?.();
                     setDemoToolsDropdownOpen((v) => !v);
                   }}
-                  style={styles.demoDropdownBtn}
+                  style={mergePaletteLayer(layers, 'demoDropdownBtn', styles.demoDropdownBtn)}
                 >
-                  <Text style={styles.demoDropdownText}>{demoToolsDropdownOpen ? '▾' : '▸'}</Text>
+                  <Text style={mergePaletteLayer(layers, 'demoDropdownText', styles.demoDropdownText)}>
+                    {demoToolsDropdownOpen ? '▾' : '▸'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setDemoFastDriftEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
-              <Text style={styles.demoToggleLabel}>Fast Drift Mode</Text>
-              <View style={[styles.demoTogglePill, demoFastDriftEnabled && styles.demoTogglePillActive]}>
-                <Text style={[styles.demoTogglePillText, demoFastDriftEnabled && styles.demoTogglePillTextActive]}>
+              <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>Fast Drift Mode</Text>
+              <View
+                style={[
+                  mergePaletteLayer(layers, 'demoTogglePill', styles.demoTogglePill),
+                  demoFastDriftEnabled && mergePaletteLayer(layers, 'demoTogglePillActive', styles.demoTogglePillActive),
+                ]}
+              >
+                <Text
+                  style={[
+                    mergePaletteLayer(layers, 'demoTogglePillText', styles.demoTogglePillText),
+                    demoFastDriftEnabled && mergePaletteLayer(layers, 'demoTogglePillTextActive', styles.demoTogglePillTextActive),
+                  ]}
+                >
                   {demoFastDriftEnabled ? 'ON' : 'OFF'}
                 </Text>
               </View>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setDemoAlertEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
-              <Text style={styles.demoToggleLabel}>Alert</Text>
-              <View style={[styles.demoTogglePill, demoAlertEnabled && styles.demoTogglePillActive]}>
-                <Text style={[styles.demoTogglePillText, demoAlertEnabled && styles.demoTogglePillTextActive]}>
+              <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>Alert</Text>
+              <View
+                style={[
+                  mergePaletteLayer(layers, 'demoTogglePill', styles.demoTogglePill),
+                  demoAlertEnabled && mergePaletteLayer(layers, 'demoTogglePillActive', styles.demoTogglePillActive),
+                ]}
+              >
+                <Text
+                  style={[
+                    mergePaletteLayer(layers, 'demoTogglePillText', styles.demoTogglePillText),
+                    demoAlertEnabled && mergePaletteLayer(layers, 'demoTogglePillTextActive', styles.demoTogglePillTextActive),
+                  ]}
+                >
                   {demoAlertEnabled ? 'ON' : 'OFF'}
                 </Text>
               </View>
@@ -3003,65 +3276,145 @@ export default function App() {
             {demoToolsDropdownOpen ? (
               <View style={styles.demoDropdownList}>
                 <TouchableOpacity onPress={() => setDemoScoreDriftEnabled((v: boolean) => !v)} style={styles.demoToggleRow}>
-                  <Text style={styles.demoToggleLabel}>Live Health Score Drift</Text>
-                  <View style={[styles.demoTogglePill, demoScoreDriftEnabled && styles.demoTogglePillActive]}>
-                    <Text style={[styles.demoTogglePillText, demoScoreDriftEnabled && styles.demoTogglePillTextActive]}>
+                  <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>Live Health Score Drift</Text>
+                  <View
+                    style={[
+                      mergePaletteLayer(layers, 'demoTogglePill', styles.demoTogglePill),
+                      demoScoreDriftEnabled && mergePaletteLayer(layers, 'demoTogglePillActive', styles.demoTogglePillActive),
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        mergePaletteLayer(layers, 'demoTogglePillText', styles.demoTogglePillText),
+                        demoScoreDriftEnabled && mergePaletteLayer(layers, 'demoTogglePillTextActive', styles.demoTogglePillTextActive),
+                      ]}
+                    >
                       {demoScoreDriftEnabled ? 'ON' : 'OFF'}
                     </Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => toggleDashboardValueDrift('glucose')} style={styles.demoToggleRow}>
-                  <Text style={styles.demoToggleLabel}>Glucose Card Drift</Text>
-                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.glucose && styles.demoTogglePillActive]}>
-                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.glucose && styles.demoTogglePillTextActive]}>
+                  <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>Glucose Card Drift</Text>
+                  <View
+                    style={[
+                      mergePaletteLayer(layers, 'demoTogglePill', styles.demoTogglePill),
+                      demoDashboardValueDrift.glucose && mergePaletteLayer(layers, 'demoTogglePillActive', styles.demoTogglePillActive),
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        mergePaletteLayer(layers, 'demoTogglePillText', styles.demoTogglePillText),
+                        demoDashboardValueDrift.glucose && mergePaletteLayer(layers, 'demoTogglePillTextActive', styles.demoTogglePillTextActive),
+                      ]}
+                    >
                       {demoDashboardValueDrift.glucose ? 'ON' : 'OFF'}
                     </Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => toggleDashboardValueDrift('stress')} style={styles.demoToggleRow}>
-                  <Text style={styles.demoToggleLabel}>Stress Card Drift</Text>
-                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.stress && styles.demoTogglePillActive]}>
-                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.stress && styles.demoTogglePillTextActive]}>
+                  <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>Stress Card Drift</Text>
+                  <View
+                    style={[
+                      mergePaletteLayer(layers, 'demoTogglePill', styles.demoTogglePill),
+                      demoDashboardValueDrift.stress && mergePaletteLayer(layers, 'demoTogglePillActive', styles.demoTogglePillActive),
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        mergePaletteLayer(layers, 'demoTogglePillText', styles.demoTogglePillText),
+                        demoDashboardValueDrift.stress && mergePaletteLayer(layers, 'demoTogglePillTextActive', styles.demoTogglePillTextActive),
+                      ]}
+                    >
                       {demoDashboardValueDrift.stress ? 'ON' : 'OFF'}
                     </Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => toggleDashboardValueDrift('heartRateCard')} style={styles.demoToggleRow}>
-                  <Text style={styles.demoToggleLabel}>Heart Rate Card Drift</Text>
-                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.heartRateCard && styles.demoTogglePillActive]}>
-                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.heartRateCard && styles.demoTogglePillTextActive]}>
+                  <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>Heart Rate Card Drift</Text>
+                  <View
+                    style={[
+                      mergePaletteLayer(layers, 'demoTogglePill', styles.demoTogglePill),
+                      demoDashboardValueDrift.heartRateCard && mergePaletteLayer(layers, 'demoTogglePillActive', styles.demoTogglePillActive),
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        mergePaletteLayer(layers, 'demoTogglePillText', styles.demoTogglePillText),
+                        demoDashboardValueDrift.heartRateCard && mergePaletteLayer(layers, 'demoTogglePillTextActive', styles.demoTogglePillTextActive),
+                      ]}
+                    >
                       {demoDashboardValueDrift.heartRateCard ? 'ON' : 'OFF'}
                     </Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => toggleDashboardValueDrift('steps')} style={styles.demoToggleRow}>
-                  <Text style={styles.demoToggleLabel}>Steps Activity Drift</Text>
-                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.steps && styles.demoTogglePillActive]}>
-                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.steps && styles.demoTogglePillTextActive]}>
+                  <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>Steps Activity Drift</Text>
+                  <View
+                    style={[
+                      mergePaletteLayer(layers, 'demoTogglePill', styles.demoTogglePill),
+                      demoDashboardValueDrift.steps && mergePaletteLayer(layers, 'demoTogglePillActive', styles.demoTogglePillActive),
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        mergePaletteLayer(layers, 'demoTogglePillText', styles.demoTogglePillText),
+                        demoDashboardValueDrift.steps && mergePaletteLayer(layers, 'demoTogglePillTextActive', styles.demoTogglePillTextActive),
+                      ]}
+                    >
                       {demoDashboardValueDrift.steps ? 'ON' : 'OFF'}
                     </Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => toggleDashboardValueDrift('sleep')} style={styles.demoToggleRow}>
-                  <Text style={styles.demoToggleLabel}>Sleep Activity Drift</Text>
-                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.sleep && styles.demoTogglePillActive]}>
-                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.sleep && styles.demoTogglePillTextActive]}>
+                  <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>Sleep Activity Drift</Text>
+                  <View
+                    style={[
+                      mergePaletteLayer(layers, 'demoTogglePill', styles.demoTogglePill),
+                      demoDashboardValueDrift.sleep && mergePaletteLayer(layers, 'demoTogglePillActive', styles.demoTogglePillActive),
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        mergePaletteLayer(layers, 'demoTogglePillText', styles.demoTogglePillText),
+                        demoDashboardValueDrift.sleep && mergePaletteLayer(layers, 'demoTogglePillTextActive', styles.demoTogglePillTextActive),
+                      ]}
+                    >
                       {demoDashboardValueDrift.sleep ? 'ON' : 'OFF'}
                     </Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => toggleDashboardValueDrift('meds')} style={styles.demoToggleRow}>
-                  <Text style={styles.demoToggleLabel}>Meds Activity Drift</Text>
-                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.meds && styles.demoTogglePillActive]}>
-                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.meds && styles.demoTogglePillTextActive]}>
+                  <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>Meds Activity Drift</Text>
+                  <View
+                    style={[
+                      mergePaletteLayer(layers, 'demoTogglePill', styles.demoTogglePill),
+                      demoDashboardValueDrift.meds && mergePaletteLayer(layers, 'demoTogglePillActive', styles.demoTogglePillActive),
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        mergePaletteLayer(layers, 'demoTogglePillText', styles.demoTogglePillText),
+                        demoDashboardValueDrift.meds && mergePaletteLayer(layers, 'demoTogglePillTextActive', styles.demoTogglePillTextActive),
+                      ]}
+                    >
                       {demoDashboardValueDrift.meds ? 'ON' : 'OFF'}
                     </Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => toggleDashboardValueDrift('water')} style={styles.demoToggleRow}>
-                  <Text style={styles.demoToggleLabel}>Water Activity Drift</Text>
-                  <View style={[styles.demoTogglePill, demoDashboardValueDrift.water && styles.demoTogglePillActive]}>
-                    <Text style={[styles.demoTogglePillText, demoDashboardValueDrift.water && styles.demoTogglePillTextActive]}>
+                  <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>Water Activity Drift</Text>
+                  <View
+                    style={[
+                      mergePaletteLayer(layers, 'demoTogglePill', styles.demoTogglePill),
+                      demoDashboardValueDrift.water && mergePaletteLayer(layers, 'demoTogglePillActive', styles.demoTogglePillActive),
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        mergePaletteLayer(layers, 'demoTogglePillText', styles.demoTogglePillText),
+                        demoDashboardValueDrift.water && mergePaletteLayer(layers, 'demoTogglePillTextActive', styles.demoTogglePillTextActive),
+                      ]}
+                    >
                       {demoDashboardValueDrift.water ? 'ON' : 'OFF'}
                     </Text>
                   </View>

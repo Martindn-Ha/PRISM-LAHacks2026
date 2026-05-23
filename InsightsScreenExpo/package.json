@@ -1,18 +1,21 @@
 {
   "name": "insightsscreenexpo",
   "version": "1.0.0",
-  "main": "index.ts",
+  "main": "index.tsx",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
+    "prebuild:icons": "expo prebuild --no-install",
     "web": "expo start --web"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "babel-preset-expo": "~54.0.10",
     "expo": "~54.0.33",
     "expo-contacts": "~15.0.11",
+    "expo-image": "~3.0.11",
     "expo-image-picker": "~17.0.10",
     "expo-location": "~19.0.8",
     "expo-notifications": "~0.32.16",

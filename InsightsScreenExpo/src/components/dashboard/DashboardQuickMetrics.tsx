@@ -3,9 +3,12 @@ import { Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, { runOnJS, type SharedValue, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import {
+  insightTabLabel,
   QUICK_ACTION_THEME_COLOR_BY_TAB,
   type InsightTab,
 } from '../../constants/insights';
+import { useDemoPalette } from '../../context/DemoPaletteContext';
+import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
 import { InsightTabIcon } from '../icons/InsightTabIcon';
 import { styles } from '../../styles/appStyles';
 
@@ -40,6 +43,8 @@ function DashboardQuickActionSlot({
   onPress,
   onDragCommit,
 }: DashboardQuickActionSlotProps) {
+  const { layers, theme } = useDemoPalette();
+  const quickIconGlyphColor = theme?.textMuted ?? '#a1a1aa';
   const onPressJS = useCallback(() => {
     onPress();
   }, [onPress]);
@@ -128,11 +133,16 @@ function DashboardQuickActionSlot({
         accessibilityRole="button"
         style={[styles.quickItem, animatedStyle]}
       >
-        <View style={[styles.quickIcon, { borderColor: QUICK_ACTION_THEME_COLOR_BY_TAB[metric] }]}>
-          <InsightTabIcon color="#cbd5e1" metric={metric} size={24} />
+        <View
+          style={[
+            mergePaletteLayer(layers, 'quickIcon', styles.quickIcon),
+            { borderColor: QUICK_ACTION_THEME_COLOR_BY_TAB[metric] },
+          ]}
+        >
+          <InsightTabIcon color={quickIconGlyphColor} metric={metric} size={28} />
         </View>
-        <Text numberOfLines={1} style={styles.quickText}>
-          {metric}
+        <Text numberOfLines={1} style={mergePaletteLayer(layers, 'quickText', styles.quickText)}>
+          {insightTabLabel(metric)}
         </Text>
       </Reanimated.View>
     </GestureDetector>

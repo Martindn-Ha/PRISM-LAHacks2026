@@ -1,10 +1,11 @@
 // @ts-nocheck
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, InteractionManager, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import {
   INSIGHT_GROUPS,
+  insightTabLabel,
   INSIGHT_TREND_WINDOW_CHIP,
   INSIGHT_TREND_WINDOW_ORDER,
   QUICK_ACTION_ICON_BY_TAB,
@@ -13,13 +14,21 @@ import {
   type InsightTab,
 } from '../constants/insights';
 import { InsightsFavoriteSparkPage } from '../components/insights/InsightsFavoriteSparkPage';
-import { buildDenseAxisTickIndices, formatTrendPointValue } from '../lib/insightChartAxis';
-import { generateInsightAnalysisBody } from '../lib/zeticClient';
+import {
+  alignTrendLabelsForPoints,
+  buildDenseAxisTickIndices,
+  formatTrendPointValue,
+  sanitizeInsightTrendPoints,
+} from '../lib/insightChartAxis';
+import { generateInsightAnalysisBody } from '../lib/heuristicContent';
+import { useDemoPalette } from '../context/DemoPaletteContext';
+import { mergePaletteLayer } from '../theme/demoPaletteTheme';
 import { styles } from '../styles/appStyles';
 
 type Props = any;
 
 export default function InsightsScreen(props: Props) {
+  const { layers, theme } = useDemoPalette();
   const {
     activeInsightTab,
     healthKitLoading,
@@ -45,11 +54,16 @@ export default function InsightsScreen(props: Props) {
     toggleDashboardQuickMetric,
     expandedInsightGroups,
     setExpandedInsightGroups,
-    setActiveInsightTab,
+    onOpenInsightTab,
+    onInsightDetailBack,
     selectedInsightContent,
     insightTrendWindow,
     onInsightTrendWindowChange,
   } = props;
+
+  /** `healthKitLoading` is true for chart refresh too; only the first Apple permission/link is “connecting”. */
+  const healthKitAwaitingAuthorization = healthKitLoading && healthKitStatus !== 'ready';
+  const healthKitRefreshingCharts = healthKitLoading && healthKitStatus === 'ready';
 
   const [insightLlmText, setInsightLlmText] = useState<string | null>(null);
   const [insightLlmBusy, setInsightLlmBusy] = useState(false);
@@ -89,7 +103,7 @@ export default function InsightsScreen(props: Props) {
   const trendWindowPicker =
     Platform.OS === 'ios' ? (
       <View style={styles.insightsTrendWindowRow}>
-        <Text style={styles.insightsTrendWindowLabel}>Trend window</Text>
+        <Text style={mergePaletteLayer(layers, 'insightsTrendWindowLabel', styles.insightsTrendWindowLabel)}>Trend window</Text>
         <View style={styles.insightsTrendWindowChips}>
           {INSIGHT_TREND_WINDOW_ORDER.map((w) => {
             const active = insightTrendWindow === w;
@@ -100,9 +114,17 @@ export default function InsightsScreen(props: Props) {
                 accessibilityState={{ selected: active, disabled: healthKitLoading }}
                 disabled={healthKitLoading}
                 onPress={() => onInsightTrendWindowChange(w)}
-                style={[styles.insightsTrendWindowChip, active && styles.insightsTrendWindowChipActive]}
+                style={[
+                  mergePaletteLayer(layers, 'insightsTrendWindowChip', styles.insightsTrendWindowChip),
+                  active && mergePaletteLayer(layers, 'insightsTrendWindowChipActive', styles.insightsTrendWindowChipActive),
+                ]}
               >
-                <Text style={[styles.insightsTrendWindowChipText, active && styles.insightsTrendWindowChipTextActive]}>
+                <Text
+                  style={[
+                    mergePaletteLayer(layers, 'insightsTrendWindowChipText', styles.insightsTrendWindowChipText),
+                    active && mergePaletteLayer(layers, 'insightsTrendWindowChipTextActive', styles.insightsTrendWindowChipTextActive),
+                  ]}
+                >
                   {INSIGHT_TREND_WINDOW_CHIP[w]}
                 </Text>
               </TouchableOpacity>
@@ -113,7 +135,7 @@ export default function InsightsScreen(props: Props) {
     ) : null;
 
   return (
-        <View style={styles.insightsScreen}>
+        <View style={mergePaletteLayer(layers, 'insightsScreen', styles.insightsScreen)}>
           {activeInsightTab == null ? (
             <ScrollView
               bounces={false}
@@ -122,50 +144,67 @@ export default function InsightsScreen(props: Props) {
               nestedScrollEnabled
               overScrollMode="never"
               showsVerticalScrollIndicator={false}
-              style={styles.insightsHubScroll}
+              style={mergePaletteLayer(layers, 'insightsHubScroll', styles.insightsHubScroll)}
             >
-              <Text style={styles.insightsTitle}>Insights</Text>
+              <Text style={mergePaletteLayer(layers, 'insightsTitle', styles.insightsTitle)}>Insights</Text>
               <View style={styles.insightsStatusRow}>
-                {Platform.OS === 'ios' && healthKitLoading ? (
+                {Platform.OS === 'ios' && healthKitAwaitingAuthorization ? (
                   <ActivityIndicator accessibilityLabel="Connecting to Apple Health" color="#93c5fd" size="small" />
+                ) : Platform.OS === 'ios' && healthKitRefreshingCharts ? (
+                  <ActivityIndicator accessibilityLabel="Updating insight charts" color="#93c5fd" size="small" />
                 ) : null}
                 <Text
                   style={[
-                    styles.insightsHealthTagline,
-                    healthKitStatus === 'ready' && Platform.OS === 'ios' && styles.insightsHealthTaglineConnected,
+                    mergePaletteLayer(layers, 'insightsHealthTagline', styles.insightsHealthTagline),
+                    healthKitStatus === 'ready' &&
+                      Platform.OS === 'ios' &&
+                      mergePaletteLayer(layers, 'insightsHealthTaglineConnected', styles.insightsHealthTaglineConnected),
                   ]}
                 >
                   {Platform.OS !== 'ios'
                     ? 'Apple Health is available on iOS only.'
-                    : healthKitLoading
+                    : healthKitAwaitingAuthorization
                       ? 'Connecting to Apple Health...'
-                      : healthKitStatus === 'ready'
-                        ? 'Connected to Apple Health.'
-                        : healthKitStatus === 'denied'
-                          ? 'Apple Health permission denied.'
-                          : healthKitStatus === 'unsupported'
-                            ? 'Apple Health unavailable in this build.'
-                            : 'Requesting Apple Health access...'}
+                      : healthKitRefreshingCharts
+                        ? 'Updating charts for the selected time range…'
+                        : healthKitStatus === 'ready'
+                          ? 'Connected to Apple Health.'
+                          : healthKitStatus === 'denied'
+                            ? 'Apple Health access was denied. Tap Connect to try again or enable access in Settings → Health → PRISM.'
+                            : healthKitStatus === 'unsupported'
+                              ? 'Apple Health unavailable in this build.'
+                              : 'PRISM uses Apple Health for personalized insights. Allow access when prompted.'}
                 </Text>
               </View>
-              {Platform.OS === 'ios' && healthKitStatus !== 'ready' ? (
+              {Platform.OS === 'ios' && healthKitStatus === 'denied' ? (
                 <TouchableOpacity
                   disabled={healthKitLoading}
                   onPress={() => {
                     setHealthKitStatus('idle');
-                    void initHealthKitAsync(insightTrendWindow);
+                    InteractionManager.runAfterInteractions(() => {
+                      void initHealthKitAsync(insightTrendWindow);
+                    });
                   }}
-                  style={[styles.healthConnectBtn, healthKitLoading && styles.healthConnectBtnDisabled]}
+                  style={[
+                    mergePaletteLayer(layers, 'healthConnectBtn', styles.healthConnectBtn),
+                    healthKitLoading && styles.healthConnectBtnDisabled,
+                  ]}
                 >
-                  <Text style={styles.healthConnectBtnText}>{healthKitLoading ? 'Connecting...' : 'Connect Apple Health'}</Text>
+                  <Text style={mergePaletteLayer(layers, 'healthConnectBtnText', styles.healthConnectBtnText)}>
+                    {healthKitLoading ? 'Connecting...' : 'Connect Apple Health'}
+                  </Text>
                 </TouchableOpacity>
               ) : null}
-              {healthKitLastError ? <Text style={styles.healthErrorText}>{healthKitLastError}</Text> : null}
+              {healthKitLastError ? <Text style={mergePaletteLayer(layers, 'healthErrorText', styles.healthErrorText)}>{healthKitLastError}</Text> : null}
               {trendWindowPicker}
               <View style={styles.insightsStarredGalleryWrap}>
                 {dashboardQuickMetrics.length === 0 ? (
-                  <Text style={styles.insightsStarredGalleryEmptyText}>
+                  <Text style={mergePaletteLayer(layers, 'insightsStarredGalleryEmptyText', styles.insightsStarredGalleryEmptyText)}>
                     Star metrics with ☆ below — your favorites appear here as swipeable charts.
+                  </Text>
+                ) : starredGalleryPageWidth <= 0 ? (
+                  <Text style={mergePaletteLayer(layers, 'insightsStarredGalleryEmptyText', styles.insightsStarredGalleryEmptyText)}>
+                    Preparing charts…
                   </Text>
                 ) : (
                   <>
@@ -226,13 +265,13 @@ export default function InsightsScreen(props: Props) {
                   </>
                 )}
               </View>
-              <Text style={styles.insightsSectionLabel}>Dashboard quick actions</Text>
-              <View style={styles.insightsSearchPanel}>
+              <Text style={mergePaletteLayer(layers, 'insightsSectionLabel', styles.insightsSectionLabel)}>Dashboard quick actions</Text>
+              <View style={mergePaletteLayer(layers, 'insightsSearchPanel', styles.insightsSearchPanel)}>
                 <TextInput
                   onChangeText={setQuickMetricSearchQuery}
                   placeholder="Search metrics to star…"
                   placeholderTextColor="#64748b"
-                  style={styles.quickMetricSearchInput}
+                  style={mergePaletteLayer(layers, 'quickMetricSearchInput', styles.quickMetricSearchInput)}
                   value={quickMetricSearchQuery}
                 />
                 <View style={styles.quickMetricSearchResults}>
@@ -243,29 +282,32 @@ export default function InsightsScreen(props: Props) {
                         key={`search-${metric}`}
                         onPress={() => toggleDashboardQuickMetric(metric)}
                         style={[
-                          styles.quickMetricOptionChip,
+                          mergePaletteLayer(layers, 'quickMetricOptionChip', styles.quickMetricOptionChip),
                           chipIndex > 0 && styles.quickMetricOptionChipSpacing,
-                          isSelected && styles.quickMetricOptionChipActive,
+                          isSelected && mergePaletteLayer(layers, 'quickMetricOptionChipActive', styles.quickMetricOptionChipActive),
                         ]}
                       >
                         <Text
                           ellipsizeMode="tail"
                           numberOfLines={1}
-                          style={[styles.quickMetricOptionText, isSelected && styles.quickMetricOptionTextActive]}
+                          style={[
+                            mergePaletteLayer(layers, 'quickMetricOptionText', styles.quickMetricOptionText),
+                            isSelected && mergePaletteLayer(layers, 'quickMetricOptionTextActive', styles.quickMetricOptionTextActive),
+                          ]}
                         >
-                          {isSelected ? '★' : '☆'} {metric}
+                          {isSelected ? '★' : '☆'} {insightTabLabel(metric)}
                         </Text>
                       </TouchableOpacity>
                     );
                   })}
                 </View>
               </View>
-              <View style={styles.insightsQuickToThemesDivider} />
+              <View style={mergePaletteLayer(layers, 'insightsQuickToThemesDivider', styles.insightsQuickToThemesDivider)} />
               <View style={[styles.insightsTabStack, styles.insightsTabScroll]}>
                 {INSIGHT_GROUPS.map((group) => {
                   const isExpanded = expandedInsightGroups[group.id] ?? false;
                   return (
-                    <View key={group.id} style={styles.insightsGroupCard}>
+                    <View key={group.id} style={mergePaletteLayer(layers, 'insightsGroupCard', styles.insightsGroupCard)}>
                       <View style={[styles.insightsGroupBand, { backgroundColor: group.color }]} />
                       <TouchableOpacity
                         onPress={() =>
@@ -276,18 +318,18 @@ export default function InsightsScreen(props: Props) {
                         style={styles.insightsGroupHeader}
                       >
                         <View style={styles.insightsGroupHeaderText}>
-                          <Text style={styles.insightsGroupTitle}>{group.title}</Text>
-                          <Text style={styles.insightsGroupSubtitle}>{group.subtitle}</Text>
+                          <Text style={mergePaletteLayer(layers, 'insightsGroupTitle', styles.insightsGroupTitle)}>{group.title}</Text>
+                          <Text style={mergePaletteLayer(layers, 'insightsGroupSubtitle', styles.insightsGroupSubtitle)}>{group.subtitle}</Text>
                         </View>
-                        <Text style={styles.insightsGroupChevron}>{isExpanded ? '−' : '+'}</Text>
+                        <Text style={mergePaletteLayer(layers, 'insightsGroupChevron', styles.insightsGroupChevron)}>{isExpanded ? '−' : '+'}</Text>
                       </TouchableOpacity>
                       {isExpanded ? (
                         <View style={styles.insightsGroupBody}>
                           {group.tabs.map((tab) => (
                             <View key={`${group.id}-${tab}`} style={styles.insightsTab}>
                               <View style={[styles.insightsSubTabBand, { backgroundColor: group.color }]} />
-                              <TouchableOpacity onPress={() => setActiveInsightTab(tab)} style={styles.insightsTabMainPress}>
-                                <Text style={styles.insightsTabText}>{tab}</Text>
+                              <TouchableOpacity onPress={() => onOpenInsightTab(tab)} style={styles.insightsTabMainPress}>
+                                <Text style={mergePaletteLayer(layers, 'insightsTabText', styles.insightsTabText)}>{insightTabLabel(tab)}</Text>
                               </TouchableOpacity>
                               <TouchableOpacity
                                 onPress={() => toggleDashboardQuickMetric(tab)}
@@ -296,7 +338,7 @@ export default function InsightsScreen(props: Props) {
                                   dashboardQuickMetrics.includes(tab) && styles.insightsTabStarBtnActive,
                                 ]}
                               >
-                                <Text style={styles.insightsTabStarText}>{dashboardQuickMetrics.includes(tab) ? '★' : '☆'}</Text>
+                                <Text style={mergePaletteLayer(layers, 'insightsTabStarText', styles.insightsTabStarText)}>{dashboardQuickMetrics.includes(tab) ? '★' : '☆'}</Text>
                               </TouchableOpacity>
                             </View>
                           ))}
@@ -308,41 +350,41 @@ export default function InsightsScreen(props: Props) {
               </View>
             </ScrollView>
           ) : (
-            <View style={styles.insightsDetailScreen}>
+            <View style={mergePaletteLayer(layers, 'insightsDetailScreen', styles.insightsDetailScreen)}>
               {selectedInsightContent ? (
                 <ScrollView
                   bounces={false}
-                  contentContainerStyle={styles.insightsDetailScrollContent}
+                  contentContainerStyle={mergePaletteLayer(layers, 'insightsDetailScrollContent', styles.insightsDetailScrollContent)}
                   keyboardShouldPersistTaps="handled"
                   nestedScrollEnabled
                   overScrollMode="never"
                   showsVerticalScrollIndicator={false}
-                  style={styles.insightsDetailScroll}
+                  style={mergePaletteLayer(layers, 'insightsDetailScroll', styles.insightsDetailScroll)}
                 >
                   <View style={styles.insightsDetailHeader}>
-                    <TouchableOpacity onPress={() => setActiveInsightTab(null)} style={styles.insightsBackBtn}>
-                      <Ionicons name="chevron-back" size={20} color="#f8fafc" />
+                    <TouchableOpacity onPress={onInsightDetailBack} style={styles.insightsBackBtn}>
+                      <Ionicons name="chevron-back" size={20} color={theme?.textPrimary ?? '#f8fafc'} />
                     </TouchableOpacity>
                     <View style={styles.insightsDetailHeaderText}>
-                      <Text style={styles.insightsTitle}>{activeInsightTab}</Text>
-                      <Text style={styles.insightsDetailSubtitle}>Dedicated insight view</Text>
+                      <Text style={mergePaletteLayer(layers, 'insightsTitle', styles.insightsTitle)}>{insightTabLabel(activeInsightTab)}</Text>
+                      <Text style={mergePaletteLayer(layers, 'insightsDetailSubtitle', styles.insightsDetailSubtitle)}>Dedicated insight view</Text>
                     </View>
                   </View>
                   <View style={styles.insightsDetailOverview}>
-                    <Text style={styles.insightsCardEyebrow}>Overview</Text>
-                    <Text style={styles.insightsDetailOverviewTitle}>{selectedInsightContent.title}</Text>
-                    <Text style={styles.insightsDetailOverviewSummary}>{selectedInsightContent.summary}</Text>
+                    <Text style={mergePaletteLayer(layers, 'insightsCardEyebrow', styles.insightsCardEyebrow)}>Overview</Text>
+                    <Text style={mergePaletteLayer(layers, 'insightsDetailOverviewTitle', styles.insightsDetailOverviewTitle)}>{selectedInsightContent.title}</Text>
+                    <Text style={mergePaletteLayer(layers, 'insightsDetailOverviewSummary', styles.insightsDetailOverviewSummary)}>{selectedInsightContent.summary}</Text>
                   </View>
                   {trendWindowPicker}
-                  <View style={styles.insightsCard}>
+                  <View style={mergePaletteLayer(layers, 'insightsCard', styles.insightsCard)}>
                     <View style={styles.insightsChartHeader}>
-                      <Text style={styles.insightsCardSection}>{INSIGHT_TREND_WINDOW_CHIP[insightTrendWindow]} trend</Text>
-                      <Text style={styles.insightsChartUnit}>Unit: {selectedInsightContent.trendUnit}</Text>
+                      <Text style={mergePaletteLayer(layers, 'insightsCardSection', styles.insightsCardSection)}>{INSIGHT_TREND_WINDOW_CHIP[insightTrendWindow]} trend</Text>
+                      <Text style={mergePaletteLayer(layers, 'insightsChartUnit', styles.insightsChartUnit)}>Unit: {selectedInsightContent.trendUnit}</Text>
                     </View>
                     <View style={styles.insightsLineChartWrap}>
                       {(() => {
-                        const points = selectedInsightContent.trendPoints ?? [0, 0, 0, 0, 0, 0, 0];
-                        const labels = selectedInsightContent.trendLabels ?? ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+                        const points = sanitizeInsightTrendPoints(selectedInsightContent.trendPoints);
+                        const labels = alignTrendLabelsForPoints(points.length, selectedInsightContent.trendLabels ?? null);
                         const n = points.length;
                         const graphPaddingX = 16;
                         const graphPaddingY = 14;
@@ -416,12 +458,16 @@ export default function InsightsScreen(props: Props) {
                             </Svg>
                             {dense ? (
                               <>
-                                <Text style={styles.insightsLineChartRangeLegend}>
+                                <Text style={mergePaletteLayer(layers, 'insightsLineChartRangeLegend', styles.insightsLineChartRangeLegend)}>
                                   {`Low ${formatTrendPointValue(dataMin)} · High ${formatTrendPointValue(dataMax)} — swipe the chart for dates below`}
                                 </Text>
                                 <View style={[styles.insightsLineChartAxisStrip, { width: chartWidth }]}>
                                   {axisTickIndices.map((idx) => {
-                                    const cx = coords[idx].x;
+                                    const pt = coords[idx];
+                                    if (!pt || !Number.isFinite(pt.x)) {
+                                      return null;
+                                    }
+                                    const cx = pt.x;
                                     const labelW = 54;
                                     const left = Math.min(
                                       chartWidth - labelW,
@@ -432,10 +478,10 @@ export default function InsightsScreen(props: Props) {
                                         key={`${selectedInsightContent.title}-axis-${idx}`}
                                         style={[styles.insightsLineChartAxisTick, { left }]}
                                       >
-                                        <Text style={styles.insightsLineChartAxisValue}>
+                                        <Text style={mergePaletteLayer(layers, 'insightsLineChartAxisValue', styles.insightsLineChartAxisValue)}>
                                           {formatTrendPointValue(points[idx])}
                                         </Text>
-                                        <Text style={styles.insightsLineChartAxisDate}>{labels[idx]}</Text>
+                                        <Text style={mergePaletteLayer(layers, 'insightsLineChartAxisDate', styles.insightsLineChartAxisDate)}>{labels[idx]}</Text>
                                       </View>
                                     );
                                   })}
@@ -450,10 +496,10 @@ export default function InsightsScreen(props: Props) {
                                       key={`${selectedInsightContent.title}-label-${idx}`}
                                       style={styles.insightsLineLabelItem}
                                     >
-                                      <Text numberOfLines={1} style={styles.insightsChartValue}>
+                                      <Text numberOfLines={1} style={mergePaletteLayer(layers, 'insightsChartValue', styles.insightsChartValue)}>
                                         {formatTrendPointValue(v)}
                                       </Text>
-                                      <Text numberOfLines={1} style={styles.insightsChartLabel}>
+                                      <Text numberOfLines={1} style={mergePaletteLayer(layers, 'insightsChartLabel', styles.insightsChartLabel)}>
                                         {label}
                                       </Text>
                                     </View>
@@ -481,48 +527,55 @@ export default function InsightsScreen(props: Props) {
                     </View>
                   </View>
                   <View style={styles.insightsDetailLlmSection}>
-                    <Text style={styles.insightsCardEyebrow}>On-edge (GEMMA-4-E2B-IT)</Text>
+                    <Text style={mergePaletteLayer(layers, 'insightsCardEyebrow', styles.insightsCardEyebrow)}>On-edge (GEMMA-4-E2B-IT)</Text>
                     {Platform.OS !== 'ios' ? (
-                      <Text style={styles.insightsHealthTagline}>Runs on iOS with the Zetic on-edge model (GEMMA-4-E2B-IT).</Text>
+                      <Text style={mergePaletteLayer(layers, 'insightsHealthTagline', styles.insightsHealthTagline)}>
+                        Uses built-in summaries in this build (no external model).
+                      </Text>
                     ) : null}
                     {Platform.OS === 'ios' && insightLlmBusy ? (
                       <View style={styles.insightsStatusRow}>
                         <ActivityIndicator accessibilityLabel="Generating insight analysis" color="#93c5fd" size="small" />
-                        <Text style={styles.insightsHealthTagline}>Synthesizing this view…</Text>
+                        <Text style={mergePaletteLayer(layers, 'insightsHealthTagline', styles.insightsHealthTagline)}>
+                          Synthesizing this view…
+                        </Text>
                       </View>
                     ) : null}
-                    {insightLlmErr ? <Text style={styles.healthErrorText}>{insightLlmErr}</Text> : null}
+                    {insightLlmErr ? <Text style={mergePaletteLayer(layers, 'healthErrorText', styles.healthErrorText)}>{insightLlmErr}</Text> : null}
                     {insightLlmText ? (
                       <>
-                        <Text style={styles.insightsDetailOverviewSummary}>{insightLlmText}</Text>
+                        <Text style={mergePaletteLayer(layers, 'insightsDetailOverviewSummary', styles.insightsDetailOverviewSummary)}>{insightLlmText}</Text>
                         <TouchableOpacity
                           disabled={insightLlmBusy}
                           hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
                           onPress={runInsightLlm}
                           style={styles.insightsLlmRegenerateWrap}
                         >
-                          <Text style={styles.insightsLlmRegenerateText}>Regenerate</Text>
+                          <Text style={mergePaletteLayer(layers, 'insightsLlmRegenerateText', styles.insightsLlmRegenerateText)}>Regenerate</Text>
                         </TouchableOpacity>
                       </>
                     ) : Platform.OS === 'ios' && !insightLlmBusy ? (
                       <TouchableOpacity
                         accessibilityRole="button"
                         onPress={runInsightLlm}
-                        style={[styles.healthConnectBtn, styles.insightsLlmPrimaryBtn]}
+                        style={[
+                          mergePaletteLayer(layers, 'healthConnectBtn', styles.healthConnectBtn),
+                          styles.insightsLlmPrimaryBtn,
+                        ]}
                       >
-                        <Text style={styles.healthConnectBtnText}>Analyze this metric</Text>
+                        <Text style={mergePaletteLayer(layers, 'healthConnectBtnText', styles.healthConnectBtnText)}>Analyze this metric</Text>
                       </TouchableOpacity>
                     ) : null}
                   </View>
                 </ScrollView>
               ) : (
                 <View style={styles.insightsDetailHeader}>
-                  <TouchableOpacity onPress={() => setActiveInsightTab(null)} style={styles.insightsBackBtn}>
-                    <Ionicons name="chevron-back" size={20} color="#f8fafc" />
+                  <TouchableOpacity onPress={onInsightDetailBack} style={styles.insightsBackBtn}>
+                    <Ionicons name="chevron-back" size={20} color={theme?.textPrimary ?? '#f8fafc'} />
                   </TouchableOpacity>
                   <View style={styles.insightsDetailHeaderText}>
-                    <Text style={styles.insightsTitle}>{activeInsightTab}</Text>
-                    <Text style={styles.insightsDetailSubtitle}>Dedicated insight view</Text>
+                    <Text style={mergePaletteLayer(layers, 'insightsTitle', styles.insightsTitle)}>{insightTabLabel(activeInsightTab)}</Text>
+                    <Text style={mergePaletteLayer(layers, 'insightsDetailSubtitle', styles.insightsDetailSubtitle)}>Dedicated insight view</Text>
                   </View>
                 </View>
               )}

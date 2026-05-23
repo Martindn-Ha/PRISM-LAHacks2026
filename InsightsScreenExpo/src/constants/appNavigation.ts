@@ -8,14 +8,13 @@ export const ACTIVITY = [
 export const NAV_ITEMS = [
   { label: 'Dashboard', icon: '◉' },
   { label: 'Insights', icon: '◌' },
-  { label: 'Alert logs', icon: '≡' },
+  { label: 'Swipes', icon: '⇄' },
   { label: 'Map', icon: '⌖' },
   { label: 'Goals', icon: '◎' },
 ];
 
-export const MAP_LAYERS = ['All', 'Ticketmaster', 'Eventbrite'] as const;
+export const MAP_LAYERS = ['All'] as const;
 export type MapLayerFilter = (typeof MAP_LAYERS)[number];
-export type MapLayer = Exclude<MapLayerFilter, 'All'>;
 
 export const GOALS_TABS = ['Active', 'Communities', 'Challenges'] as const;
 export type GoalsTab = (typeof GOALS_TABS)[number];
