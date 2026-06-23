@@ -1,9 +1,13 @@
-// Gesture handler must stay first (Expo + RNGH). Do not import reanimated before this — it can crash startup and leave "main" unregistered.
+// Background tasks must load before the app root renders.
+import './src/tasks/locationTrailTask';
+import './src/tasks/backgroundGlucoseTask';
 import 'react-native-gesture-handler';
 import { registerRootComponent } from 'expo';
 import React from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DemoPaletteProvider, useDemoPalette } from './src/context/DemoPaletteContext';
+import { TypographyProvider } from './src/context/TypographyContext';
 import AppScreen from './src/screens/AppScreen';
 import { getAppCanvasBackground } from './src/theme/demoPaletteTheme';
 
@@ -19,9 +23,13 @@ function ThemedGestureRoot() {
 
 function Root() {
   return (
-    <DemoPaletteProvider>
-      <ThemedGestureRoot />
-    </DemoPaletteProvider>
+    <SafeAreaProvider>
+      <TypographyProvider>
+        <DemoPaletteProvider>
+          <ThemedGestureRoot />
+        </DemoPaletteProvider>
+      </TypographyProvider>
+    </SafeAreaProvider>
   );
 }
 

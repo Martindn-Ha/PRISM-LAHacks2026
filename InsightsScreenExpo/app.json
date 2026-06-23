@@ -3,10 +3,11 @@
     "plugins": ["./plugins/withStripIosPushEntitlement.js"],
     "name": "PRISM",
     "slug": "prism",
+    "scheme": "prism",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/PRISM.png",

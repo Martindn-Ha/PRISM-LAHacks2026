@@ -98,3 +98,60 @@ export function buildDenseAxisTickIndices(
   out = [...new Set([first, ...inner, last])].sort((a, b) => a - b);
   return out;
 }
+
+/** Map chart-space x to the width the chart is actually drawn at. */
+export function scaleChartX(x: number, chartWidth: number, displayWidth: number): number {
+  if (!Number.isFinite(x) || chartWidth <= 0 || displayWidth <= 0) {
+    return 0;
+  }
+  return (x / chartWidth) * displayWidth;
+}
+
+/** Y-axis range with padded min/max and ~4 tick marks (Apple-style). */
+export type ChartYRange = { min: number; max: number; ticks: number[] };
+
+export function buildChartYRange(values: number[], paddingPct = 0.12): ChartYRange {
+  const finite = values.filter((v) => Number.isFinite(v) && v > 0);
+  if (finite.length === 0) {
+    return { min: 0, max: 100, ticks: [0, 50, 100] };
+  }
+  const rawMin = Math.min(...finite);
+  const rawMax = Math.max(...finite);
+  const span = Math.max(rawMax - rawMin, rawMax * 0.08, 1);
+  const pad = span * paddingPct;
+  const min = Math.floor(rawMin - pad);
+  const max = Math.ceil(rawMax + pad);
+  const step = Math.max(1, Math.round((max - min) / 3));
+  const ticks: number[] = [];
+  for (let t = min; t <= max; t += step) {
+    ticks.push(t);
+  }
+  if (ticks[ticks.length - 1] !== max) {
+    ticks.push(max);
+  }
+  return { min, max, ticks };
+}
+
+export function formatIntradayTimeLabel(atMs: number): string {
+  const d = new Date(atMs);
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true }).replace(' ', '');
+}
+
+/** Place an axis label under its tick without clipping the first/last labels. */
+export function placeAxisLabelLeft(
+  cx: number,
+  idx: number,
+  n: number,
+  labelW: number,
+  displayWidth: number,
+  chartWidth: number,
+): number {
+  const x = scaleChartX(cx, chartWidth, displayWidth);
+  if (idx <= 0) {
+    return 0;
+  }
+  if (idx >= n - 1) {
+    return Math.max(0, displayWidth - labelW);
+  }
+  return Math.min(displayWidth - labelW, Math.max(0, Math.round(x - labelW / 2)));
+}

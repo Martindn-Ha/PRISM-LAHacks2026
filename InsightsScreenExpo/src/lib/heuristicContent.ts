@@ -1,36 +1,4 @@
-import type { InsightTrendWindow } from '../constants/insights';
 import type { AristaContextPayload } from '../types/experience';
-
-export type AdvisorSuggestionMetric = 'glucose' | 'stress' | 'heartRate';
-
-const ADVISOR_SUGGESTION_BODY: Record<AdvisorSuggestionMetric, string> = {
-  stress:
-    'Quick resets help when stress is up—micro breaks, box breathing, and short walks between tasks can flatten the curve.',
-  glucose:
-    'When glucose is elevated, favor protein + fiber and steady carbs—lighter swaps keep you full without sharp spikes.',
-  heartRate:
-    'Slow nasal breathing helps after heart rate spikes—try a paced inhale and exhale for 60–90 seconds to settle your rhythm.',
-};
-
-export type AdvisorSuggestionResult = {
-  body: string;
-  source: 'fallback';
-  error: null;
-};
-
-/** Static wellness copy for the dashboard advisor “Suggestions” action. */
-export const generateAdvisorSuggestionBody = async (input: {
-  metric: AdvisorSuggestionMetric;
-  stressValue: number;
-  glucoseValue: number;
-  heartRateValue: number;
-}): Promise<AdvisorSuggestionResult> => {
-  return {
-    body: ADVISOR_SUGGESTION_BODY[input.metric],
-    source: 'fallback',
-    error: null,
-  };
-};
 
 const MAX_TAGS = 8;
 const MIN_TAGS = 3;
@@ -146,7 +114,6 @@ export const buildProgressPostHeuristics = (input: {
 };
 
 export type InsightAnalysisInput = {
-  trendWindow: InsightTrendWindow;
   tab: string;
   title: string;
   summary: string;

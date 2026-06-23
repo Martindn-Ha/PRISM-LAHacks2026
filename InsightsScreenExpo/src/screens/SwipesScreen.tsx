@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, useWindowDimensions, View, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
@@ -14,7 +14,8 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { useDemoPalette } from '../context/DemoPaletteContext';
 import { mergePaletteLayer } from '../theme/demoPaletteTheme';
-import { styles as appStyles } from '../styles/appStyles';
+import { useTypography } from '../context/TypographyContext';
+import { scaleStyleRecord } from '../theme/typography';
 
 export type DemoSwipeCategory = 'nutrition' | 'activity' | 'recovery' | 'mindfulness' | 'habits';
 
@@ -33,6 +34,17 @@ export type DemoSwipeItem = {
 
 /** Mixed nutrition, movement, sleep, hydration, and mindfulness — demo-only swipe deck. */
 export const DEMO_SWIPE_DECK: DemoSwipeItem[] = [
+  {
+    id: 'k1',
+    name: 'Hang out with Kyle',
+    emoji: '👋',
+    category: 'activity',
+    imageUrl:
+      'https://images.unsplash.com/photo-1529156069898-49953e39b3ac?auto=format&fit=crop&w=900&q=80',
+    detailLine: 'This afternoon · low-key',
+    tags: ['Social', 'Recovery'],
+    blurb: 'Coffee, a walk, or just catch up — good for mood and stress balance.',
+  },
   {
     id: 'n1',
     name: 'Mediterranean grain bowl',
@@ -221,6 +233,7 @@ function SwipeCardFace({
   /** Inner content width (card minus horizontal padding). Avoids % sizing bugs inside animated cards. */
   heroWidth: number;
 }) {
+  const local = useSwipeLocalStyles();
   const heroH = compact ? 132 : 172;
   return (
     <View style={[local.cardInner, compact && local.cardInnerCompact]}>
@@ -276,6 +289,7 @@ function SwipeScreenEdge({
   swipeThreshold: number;
   onPress: () => void;
 }) {
+  const local = useSwipeLocalStyles();
   const pillH = Math.max(280, Math.min(slotHeight * 0.9, slotHeight - 32));
   const pillTop = (slotHeight - pillH) / 2;
   const glowStyle = useAnimatedStyle(() => {
@@ -323,6 +337,7 @@ const SwipeableFoodCard = forwardRef<SwipeableFoodCardHandle, SwipeableCardProps
   { item, onSwipedLeft, onSwipedRight, screenWidth, cardWidth, translateX, translateY },
   ref,
 ) {
+  const local = useSwipeLocalStyles();
   const swipeThreshold = screenWidth * 0.22;
   const exitX = screenWidth * 1.35;
 
@@ -404,12 +419,16 @@ const SwipeableFoodCard = forwardRef<SwipeableFoodCardHandle, SwipeableCardProps
 });
 
 export default function SwipesScreen() {
+  const { styles: appStyles } = useTypography();
   const { layers } = useDemoPalette();
-  const { width, height: windowHeight } = useWindowDimensions();
+  const { width } = useWindowDimensions();
+  const local = useMemo(
+    () => StyleSheet.create(scaleStyleRecord(swipeLocalBase as Record<string, import('react-native').ViewStyle | import('react-native').TextStyle>, width)),
+    [width],
+  );
   const swipeCardRef = useRef<SwipeableFoodCardHandle>(null);
-  const swipeScreenOuterRef = useRef<View>(null);
+  const [hostLayout, setHostLayout] = useState({ width: 0, height: 0 });
   const [deck, setDeck] = useState<DemoSwipeItem[]>(() => [...DEMO_SWIPE_DECK]);
-  const [edgeWinOrigin, setEdgeWinOrigin] = useState({ x: 0, y: 0 });
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
 
@@ -441,18 +460,6 @@ export default function SwipesScreen() {
     translateY.value = 0;
   }, [current?.id, translateX, translateY]);
 
-  const syncEdgeWindowFrame = useCallback(() => {
-    requestAnimationFrame(() => {
-      swipeScreenOuterRef.current?.measureInWindow((x, y) => {
-        setEdgeWinOrigin({ x, y });
-      });
-    });
-  }, []);
-
-  useEffect(() => {
-    syncEdgeWindowFrame();
-  }, [syncEdgeWindowFrame, width, windowHeight]);
-
   useEffect(() => {
     const urls = deck.slice(0, 4).map((i) => i.imageUrl);
     if (urls.length === 0) {
@@ -468,39 +475,33 @@ export default function SwipesScreen() {
       StyleSheet.flatten(
         mergePaletteLayer(layers, 'resourcesScreen', appStyles.resourcesScreen),
       ) as ViewStyle,
-    [layers],
+    [layers, appStyles],
   );
   const swipesOuterBackground = resourcesScreenStyle.backgroundColor ?? '#111827';
 
   return (
+    <SwipeLocalStylesContext.Provider value={local}>
     <View
-      ref={swipeScreenOuterRef}
       style={[local.swipesScreenOuter, { backgroundColor: swipesOuterBackground }]}
-      onLayout={syncEdgeWindowFrame}
+      onLayout={(e) => {
+        const { width: layoutWidth, height: layoutHeight } = e.nativeEvent.layout;
+        setHostLayout((prev) =>
+          prev.width === layoutWidth && prev.height === layoutHeight ? prev : { width: layoutWidth, height: layoutHeight },
+        );
+      }}
     >
-      {current ? (
-        <View
-          pointerEvents="box-none"
-          style={[
-            local.edgeGlowLayerFullWindow,
-            {
-              left: -edgeWinOrigin.x,
-              top: -edgeWinOrigin.y,
-              width,
-              height: windowHeight,
-            },
-          ]}
-        >
+      {current && hostLayout.height > 0 ? (
+        <View pointerEvents="box-none" style={local.edgeGlowLayerTabBounds}>
           <SwipeScreenEdge
             side="left"
-            slotHeight={windowHeight}
+            slotHeight={hostLayout.height}
             swipeThreshold={swipeThreshold}
             translateX={translateX}
             onPress={() => swipeCardRef.current?.nudgeLeft()}
           />
           <SwipeScreenEdge
             side="right"
-            slotHeight={windowHeight}
+            slotHeight={hostLayout.height}
             swipeThreshold={swipeThreshold}
             translateX={translateX}
             onPress={() => swipeCardRef.current?.nudgeRight()}
@@ -516,9 +517,6 @@ export default function SwipesScreen() {
         ]}
       >
         <Text style={mergePaletteLayer(layers, 'resourcesTitle', appStyles.resourcesTitle)}>Swipes</Text>
-        <Text style={mergePaletteLayer(layers, 'resourcesSubtitle', appStyles.resourcesSubtitle)}>
-          Demo meals, workouts, sleep, and habits — swipe to shortlist what fits your week. Right saves, left passes.
-        </Text>
 
         <View style={local.deckWrap} pointerEvents="box-none">
           {!current ? (
@@ -553,17 +551,19 @@ export default function SwipesScreen() {
         </View>
       </View>
     </View>
+    </SwipeLocalStylesContext.Provider>
   );
 }
 
-const local = StyleSheet.create({
+const swipeLocalBase = {
   swipesScreenOuter: {
     flex: 1,
     position: 'relative',
+    overflow: 'hidden',
   },
-  /** Under text + cards; full-window frame aligns with `measureInWindow` on the outer host. */
-  edgeGlowLayerFullWindow: {
-    position: 'absolute',
+  /** Side-edge skip/save targets — confined to the Swipes tab, not the app header. */
+  edgeGlowLayerTabBounds: {
+    ...StyleSheet.absoluteFillObject,
     zIndex: 1,
     pointerEvents: 'box-none',
   },
@@ -793,4 +793,17 @@ const local = StyleSheet.create({
     fontSize: 17,
     fontWeight: '800',
   },
-});
+};
+
+type SwipeLocalStyles = ReturnType<typeof StyleSheet.create<Record<string, import('react-native').ViewStyle | import('react-native').TextStyle>>>;
+
+const SwipeLocalStylesContext = createContext<SwipeLocalStyles | null>(null);
+
+function useSwipeLocalStyles(): SwipeLocalStyles {
+  const styles = useContext(SwipeLocalStylesContext);
+  if (!styles) {
+    throw new Error('useSwipeLocalStyles must be used within SwipeLocalStylesContext');
+  }
+  return styles;
+}
+

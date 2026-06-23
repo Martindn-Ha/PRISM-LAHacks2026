@@ -1,24 +1,11 @@
 import { StyleSheet, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 
-export type DemoPaletteId = 'default' | 'palette1' | 'palette2' | 'palette3' | 'palette4' | 'palette5';
-
-export type DemoPaletteChoice = {
-  id: DemoPaletteId;
-  label: string;
-  swatches: readonly [string, string, string, string] | null;
-};
-
-export const DEMO_PALETTE_CHOICES: DemoPaletteChoice[] = [
-  { id: 'default', label: 'Default palette', swatches: null },
-  { id: 'palette1', label: 'Palette 1', swatches: ['#222831', '#393E46', '#00ADB5', '#EEEEEE'] },
-  { id: 'palette2', label: 'Palette 2', swatches: ['#E3FDFD', '#CBF1F5', '#A6E3E9', '#71C9CE'] },
-  { id: 'palette3', label: 'Palette 3', swatches: ['#F9F7F7', '#DBE2EF', '#3F72AF', '#112D4E'] },
-  { id: 'palette4', label: 'Palette 4', swatches: ['#FFF5E4', '#FFE3E1', '#FFD1D1', '#FF9494'] },
-  { id: 'palette5', label: 'Palette 5', swatches: ['#F9F5F6', '#F8E8EE', '#FDCEDF', '#F2BED1'] },
-];
-
-/** Canvas when no demo palette is selected (matches legacy `appStyles.container`). */
+/** Canvas background (matches legacy `appStyles.container`). */
 export const DEFAULT_APP_CANVAS = '#111827';
+
+export type AppColorScheme = 'dark' | 'light';
+
+export const APP_COLOR_SCHEME_STORAGE_KEY = 'prism.appColorScheme';
 
 export type ResolvedDemoPaletteTheme = {
   isLight: boolean;
@@ -36,6 +23,44 @@ export type ResolvedDemoPaletteTheme = {
   sidebarPanel: string;
   success: string;
 };
+
+export const DARK_APP_THEME: ResolvedDemoPaletteTheme = {
+  isLight: false,
+  screenBackground: '#111827',
+  elevated: '#1f2937',
+  accent: '#60a5fa',
+  accentSoft: 'rgba(96,165,250,0.22)',
+  accentBorder: 'rgba(96,165,250,0.72)',
+  textPrimary: '#f8fafc',
+  textSecondary: '#cbd5e1',
+  textMuted: '#94a3b8',
+  borderOnLight: 'rgba(255,255,255,0.22)',
+  borderGlass: 'rgba(255,255,255,0.38)',
+  shadowTint: '#ffffff',
+  sidebarPanel: '#0f172a',
+  success: '#22c55e',
+};
+
+export const LIGHT_APP_THEME: ResolvedDemoPaletteTheme = {
+  isLight: true,
+  screenBackground: '#dfe5ec',
+  elevated: '#e9eef3',
+  accent: '#3b6fd9',
+  accentSoft: 'rgba(59,111,217,0.16)',
+  accentBorder: 'rgba(59,111,217,0.38)',
+  textPrimary: '#1e293b',
+  textSecondary: '#4b5c72',
+  textMuted: '#64748b',
+  borderOnLight: 'rgba(30,41,59,0.12)',
+  borderGlass: 'rgba(30,41,59,0.1)',
+  shadowTint: 'rgba(30,41,59,0.14)',
+  sidebarPanel: '#e9eef3',
+  success: '#15803d',
+};
+
+export function resolveAppTheme(scheme: AppColorScheme): ResolvedDemoPaletteTheme {
+  return scheme === 'light' ? LIGHT_APP_THEME : DARK_APP_THEME;
+}
 
 export type DemoPaletteLayers = Record<string, ViewStyle | TextStyle | undefined>;
 
@@ -91,58 +116,6 @@ function labelOnSolidAccent(accent: string): string {
 /** Label on accent-soft / tinted chip fills — pastel accent type on pastel fill fails on light themes. */
 function labelOnTintedControl(isLight: boolean, textPrimary: string, accent: string): string {
   return isLight ? textPrimary : mixHex('#dbeafe', accent, 0.38);
-}
-
-export function resolveDemoPaletteTheme(id: DemoPaletteId): ResolvedDemoPaletteTheme | null {
-  if (id === 'default') {
-    return null;
-  }
-  const choice = DEMO_PALETTE_CHOICES.find((c) => c.id === id);
-  const slots = choice?.swatches;
-  if (!slots) {
-    return null;
-  }
-  const [c0, c1, c2, c3] = slots;
-  const isLight = relativeLuminance(c0) > 0.52;
-  /** Light palettes: use true black-based type for readability on pastel fills. */
-  const textPrimary = isLight
-    ? '#000000'
-    : relativeLuminance(c3) > 0.58
-      ? c3
-      : '#f8fafc';
-  const textSecondary = isLight ? '#262626' : mixHex(textPrimary, '#94a3b8', 0.45);
-  const textMuted = isLight ? '#525252' : '#94a3b8';
-  const accent = c2;
-  const accentSoft = withAlpha(accent, isLight ? 0.2 : 0.22);
-  const accentBorder = withAlpha(accent, 0.72);
-  const borderOnLight = isLight ? withAlpha(textPrimary, 0.18) : 'rgba(255,255,255,0.22)';
-  const borderGlass = isLight ? withAlpha(textPrimary, 0.28) : 'rgba(255,255,255,0.38)';
-  const shadowTint = isLight ? withAlpha(textPrimary, 0.25) : '#ffffff';
-  const sidebarPanel = isLight ? mixHex(c0, '#0f172a', 0.08) : mixHex(c0, '#000000', 0.42);
-  const success = isLight ? mixHex(accent, '#15803d', 0.35) : '#86efac';
-
-  /**
-   * Light demo swatches use near-white c0; using c0 alone reads as “plain white” on device.
-   * Blend c1 + c2 into the canvas so the palette is visible while staying in the same family.
-   */
-  const screenBackground = isLight ? mixHex(mixHex(c0, c1, 0.52), c2, 0.24) : c0;
-
-  return {
-    isLight,
-    screenBackground,
-    elevated: c1,
-    accent,
-    accentSoft,
-    accentBorder,
-    textPrimary,
-    textSecondary,
-    textMuted,
-    borderOnLight,
-    borderGlass,
-    shadowTint,
-    sidebarPanel,
-    success,
-  };
 }
 
 /** Recursively flatten style arrays so native never receives nested arrays (can trigger HostFunction errors). */
@@ -235,13 +208,30 @@ export function buildDemoPaletteLayers(theme: ResolvedDemoPaletteTheme | null): 
     content: B(t.screenBackground),
     mapScreen: B(t.screenBackground),
     goalsScreen: B(t.screenBackground),
+    wellnessScreen: B(t.screenBackground),
     insightsScreen: B(t.screenBackground),
     insightsHubScroll: B(t.screenBackground),
     insightsDetailScreen: B(t.screenBackground),
     insightsDetailScroll: B(t.screenBackground),
     insightsDetailScrollContent: B(t.screenBackground),
     resourcesScreen: B(t.screenBackground),
-    bottomNav: B(t.screenBackground),
+    bottomNav: { ...B(t.screenBackground), borderTopColor: t.borderGlass },
+    navCenterButton: {
+      backgroundColor: t.isLight ? t.screenBackground : t.elevated,
+      borderColor: t.borderGlass,
+    },
+    appHeader: {
+      backgroundColor: t.isLight ? t.elevated : t.sidebarPanel,
+      borderBottomColor: t.borderGlass,
+    },
+    appHeaderTitle: L(t.textPrimary),
+    appHeaderSubtitle: L(t.textSecondary),
+    appHeaderSubtitleMuted: L(t.textMuted),
+    appHeaderMenuBtn: {
+      backgroundColor: t.isLight ? withAlpha(t.screenBackground, 0.7) : withAlpha(t.elevated, 0.55),
+      borderColor: t.borderGlass,
+      borderWidth: StyleSheet.hairlineWidth,
+    },
     /** Fills the absolute tab stack above the nav (otherwise iOS shows default white through transparent layers). */
     tabStackLayer: B(t.screenBackground),
     navIcon: L(t.isLight ? t.textPrimary : t.textMuted),
@@ -264,16 +254,13 @@ export function buildDemoPaletteLayers(theme: ResolvedDemoPaletteTheme | null): 
     glassCard: {
       borderColor: t.borderGlass,
       shadowColor: t.shadowTint,
-      /** Was fully transparent in base styles — without a fill, iOS scroll chrome + light palettes read as “all white”. */
-      backgroundColor: t.isLight ? withAlpha(t.elevated, 0.9) : withAlpha(t.elevated, 0.42),
+      backgroundColor: t.isLight ? withAlpha(t.elevated, 0.9) : 'transparent',
     },
     glassCardLarge: {
       borderColor: t.borderGlass,
       shadowColor: t.shadowTint,
-      backgroundColor: t.isLight ? withAlpha(t.elevated, 0.88) : withAlpha(t.elevated, 0.4),
+      backgroundColor: t.isLight ? withAlpha(t.elevated, 0.88) : 'transparent',
     },
-    foodCard: { borderColor: t.borderGlass, backgroundColor: t.isLight ? withAlpha(t.elevated, 0.88) : withAlpha(t.elevated, 0.35) },
-    neuralAdvisorDivider: { backgroundColor: t.borderGlass },
     sectionLabel: L(t.textMuted),
     quickIcon: { borderColor: t.borderGlass, shadowColor: t.shadowTint },
     quickIconGlyph: L(t.textMuted),
@@ -286,29 +273,6 @@ export function buildDemoPaletteLayers(theme: ResolvedDemoPaletteTheme | null): 
     activityLabel: L(t.textMuted),
     activityValue: L(t.textPrimary),
     activityDivider: { backgroundColor: t.borderGlass },
-    cardTitle: L(t.textPrimary),
-    cardText: L(t.textSecondary),
-    cardBadge: L(t.accent),
-    /** “NEURAL AI ADVISOR” chip — accent-only on light glass reads as low-contrast; anchor to primary type. */
-    neuralAdvisorBadge: L(t.isLight ? mixHex(t.textPrimary, t.accent, 0.38) : t.accent),
-    /** Primary body color so carousel copy never sits as “muted gray on muted glass” (unreadable on light palettes). */
-    advisorGallerySlideText: {
-      color: t.textPrimary,
-      fontSize: 18,
-      lineHeight: 26,
-      fontWeight: '600',
-    },
-    advisorGallerySlideTextSteady: {
-      color: t.textPrimary,
-      fontSize: 22,
-      lineHeight: 30,
-      fontWeight: '800',
-      letterSpacing: -0.2,
-    },
-    foodToggleBtn: { borderColor: t.accentBorder },
-    foodToggleGlyph: L(t.accent),
-    foodBtn: { borderColor: t.accentBorder },
-    foodBtnText: L(t.accent),
     alertBadge: { borderColor: t.isLight ? t.borderGlass : withAlpha(t.screenBackground, 0.92) },
     alertText: L(mixHex('#ca8a04', t.accent, 0.4)),
     alertsModalBackdrop: {
@@ -342,12 +306,6 @@ export function buildDemoPaletteLayers(theme: ResolvedDemoPaletteTheme | null): 
     challengeModalCancelText: L(t.textSecondary),
     challengeModalCreateBtn: { borderColor: ctaFill, backgroundColor: ctaFill },
     challengeModalCreateText: L(ctaLabel),
-    advisorGalleryPrimaryBtn: { borderColor: ctaFill, backgroundColor: ctaFill },
-    advisorGalleryPrimaryBtnText: L(ctaLabel),
-    advisorGallerySecondaryBtn: { borderColor: chipInactiveBorder },
-    advisorGallerySecondaryBtnText: L(t.isLight ? t.textPrimary : t.textSecondary),
-    advisorGalleryPagerDot: { backgroundColor: t.textMuted },
-    advisorGalleryPagerDotActive: B(t.accent),
     sidebarPanel: { ...B(t.sidebarPanel), borderRightColor: t.borderGlass },
     sidebarTitle: L(t.textPrimary),
     sidebarClose: L(t.textPrimary),
@@ -362,16 +320,6 @@ export function buildDemoPaletteLayers(theme: ResolvedDemoPaletteTheme | null): 
     demoTogglePillTextActive: L(chipActiveText),
     demoDropdownBtn: { borderColor: chipInactiveBorder, backgroundColor: chipInactiveBg },
     demoDropdownText: L(chipInactiveText),
-    demoPaletteRow: {
-      borderColor: chipInactiveBorder,
-      backgroundColor: chipInactiveBg,
-    },
-    demoPaletteRowActive: {
-      borderColor: t.accentBorder,
-      backgroundColor: t.accentSoft,
-    },
-    demoPaletteRowLabel: L(t.textPrimary),
-    demoPaletteRowHint: L(t.textMuted),
 
     mapTitle: L(t.textPrimary),
     mapSubtitle: L(t.textSecondary),
@@ -407,6 +355,27 @@ export function buildDemoPaletteLayers(theme: ResolvedDemoPaletteTheme | null): 
     insightsTitle: L(t.textPrimary),
     insightsHealthTagline: L(t.textSecondary),
     insightsHealthTaglineConnected: L(t.success),
+    insightsHealthCapsuleConnected: {
+      backgroundColor: withAlpha(t.success, 0.12),
+      borderColor: withAlpha(t.success, 0.35),
+    },
+    insightsHealthCapsuleDisconnected: {
+      backgroundColor: withAlpha('#ef4444', 0.1),
+      borderColor: withAlpha('#ef4444', 0.32),
+    },
+    insightsHealthCapsuleSyncing: {
+      backgroundColor: withAlpha('#eab308', 0.14),
+      borderColor: withAlpha('#eab308', 0.4),
+    },
+    insightsHealthCapsuleTextConnected: L(t.success),
+    insightsHealthCapsuleTextDisconnected: L('#f87171'),
+    insightsHealthCapsuleTextSyncing: L('#fde047'),
+    insightsHealthSyncMeta: L(t.textMuted),
+    quickActionsCustomizeBtn: {
+      backgroundColor: withAlpha(t.textMuted, 0.12),
+      borderColor: withAlpha(t.textMuted, 0.28),
+    },
+    quickActionsCustomizeText: L(t.textSecondary),
     insightsTrendWindowLabel: L(t.textMuted),
     insightsTrendWindowChip: { borderColor: chipInactiveBorder, backgroundColor: chipInactiveBg },
     insightsTrendWindowChipActive: { borderColor: t.accentBorder, backgroundColor: t.accentSoft },
@@ -421,6 +390,16 @@ export function buildDemoPaletteLayers(theme: ResolvedDemoPaletteTheme | null): 
     quickMetricOptionText: L(chipInactiveText),
     quickMetricOptionTextActive: L(chipActiveText),
     insightsQuickToThemesDivider: { backgroundColor: t.borderGlass },
+    insightsMetricSectionTitle: L(t.textPrimary),
+    insightsMetricSectionDivider: { backgroundColor: t.borderGlass },
+    insightsMetricSectionSubtitle: L(t.textSecondary),
+    insightsMetricCard: { borderColor: t.borderGlass, backgroundColor: cardBg },
+    insightsMetricCardLabel: L(t.textPrimary),
+    insightsMetricCardPreview: L(t.textSecondary),
+    insightsMetricCardStarBtn: { borderColor: chipInactiveBorder, backgroundColor: chipInactiveBg },
+    insightsMetricCardStarBtnActive: { borderColor: 'rgba(251,191,36,0.7)', backgroundColor: 'rgba(251,191,36,0.18)' },
+    insightsMetricCardStarText: L(t.textMuted),
+    insightsMetricCardStarTextActive: L('#fcd34d'),
     insightsGroupCard: { borderColor: t.borderGlass, backgroundColor: cardBg },
     insightsGroupTitle: L(t.textPrimary),
     insightsGroupSubtitle: L(t.textSecondary),
@@ -428,10 +407,25 @@ export function buildDemoPaletteLayers(theme: ResolvedDemoPaletteTheme | null): 
     insightsTabText: L(t.textPrimary),
     insightsTabStarText: L(t.textMuted),
     insightsDetailSubtitle: L(t.textSecondary),
+    insightsMetricDescription: L(t.textMuted),
+    insightsMetricSectionLabel: L(t.textSecondary),
+    insightsHeartHubRowLabel: L(t.textPrimary),
+    insightsHeartHubRowMeta: L(t.textMuted),
+    insightsHeartHubRowNumber: L(t.textPrimary),
+    insightsHeartHubRowUnit: L(t.textMuted),
+    insightsMetricCardSubtitle: L(t.textMuted),
     insightsCardEyebrow: L(t.textMuted),
     insightsDetailOverviewTitle: L(t.textPrimary),
     insightsDetailOverviewSummary: L(t.textSecondary),
+    insightsDetailHeroValue: L(t.textPrimary),
+    insightsDetailHeroUnit: L(t.textMuted),
+    insightsHeartRateHeroContext: L(t.textMuted),
+    insightsHeartRateDayNavLabel: L(t.textPrimary),
+    insightsHeartRateSwipeLabel: L(t.textPrimary),
+    insightsChartPeriodSegmentText: L(t.textMuted),
+    insightsChartPeriodSegmentTextSelected: L('#fecdd3'),
     insightsCard: { borderColor: t.borderGlass, backgroundColor: chipInactiveBg },
+    insightsTrendChartCard: { borderColor: t.borderGlass, backgroundColor: chipInactiveBg },
     insightsCardSection: L(t.textPrimary),
     insightsChartUnit: L(t.textMuted),
     insightsLineChartRangeLegend: L(t.textMuted),
@@ -455,6 +449,25 @@ export function buildDemoPaletteLayers(theme: ResolvedDemoPaletteTheme | null): 
     profileBadgesSectionHint: L(t.textMuted),
     profileBadgeName: L(t.textPrimary),
     profileBadgeNameLocked: L(t.textMuted),
+
+    wellnessTitle: L(t.textPrimary),
+    wellnessIntroInstructions: L(t.textPrimary),
+    wellnessBody: L(t.textSecondary),
+    wellnessHint: L(t.textMuted),
+    wellnessResumeCard: { backgroundColor: cardBg, borderColor: cardBorder },
+    wellnessResumeTitle: L(t.textPrimary),
+    wellnessPrimaryBtn: { borderColor: ctaFill, backgroundColor: ctaFill },
+    wellnessPrimaryBtnText: L(ctaLabel),
+    wellnessSecondaryBtn: { borderColor: t.borderGlass },
+    wellnessSecondaryBtnText: L(t.textSecondary),
+    wellnessAnswerBtn: { backgroundColor: cardBg, borderColor: cardBorder },
+    wellnessAnswerBtnSelected: { borderColor: withAlpha(t.accent, 0.9), backgroundColor: withAlpha(t.accent, t.isLight ? 0.14 : 0.22) },
+    wellnessAnswerBtnText: L(t.textSecondary),
+    wellnessAnswerBtnTextSelected: L(t.textPrimary),
+    wellnessQuestionText: L(t.textPrimary),
+    wellnessInsightCard: { backgroundColor: cardBg, borderColor: cardBorder },
+    wellnessInsightTitle: L(t.textPrimary),
+    wellnessDisclaimer: L(t.textMuted),
   };
 
   return layers;

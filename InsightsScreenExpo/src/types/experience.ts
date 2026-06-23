@@ -1,13 +1,3 @@
-export type DashboardValueDriftToggles = {
-  glucose: boolean;
-  stress: boolean;
-  heartRateCard: boolean;
-  steps: boolean;
-  sleep: boolean;
-  meds: boolean;
-  water: boolean;
-};
-
 export type ProgressPostStatus = 'processing' | 'ready' | 'failed';
 
 export type MediaVariants = {
@@ -60,16 +50,6 @@ export type CommunityEventItem = {
   longitude?: number | null;
 };
 
-export type MapScreenPin = {
-  id: string;
-  latitude: number;
-  longitude: number;
-  title: string;
-  subtitle: string;
-  pinColor?: string;
-  linkedEvent?: CommunityEventItem;
-};
-
 export type ProgressBoardPost = {
   id: string;
   author: string;
@@ -99,4 +79,10 @@ export type AlertLogEvent = {
   level: AlertLogLevel;
   source: string;
   message: string;
+  glucoseValue?: number;
+  glucoseAt?: string;
+  latitude?: number;
+  longitude?: number;
+  locationAt?: string;
+  direction?: string;
 };

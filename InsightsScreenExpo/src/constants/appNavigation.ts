@@ -6,31 +6,14 @@ export const ACTIVITY = [
 ];
 
 export const NAV_ITEMS = [
-  { label: 'Dashboard', icon: '◉' },
-  { label: 'Insights', icon: '◌' },
-  { label: 'Swipes', icon: '⇄' },
-  { label: 'Map', icon: '⌖' },
-  { label: 'Goals', icon: '◎' },
-];
+  { label: 'Personality', icon: 'personality' },
+  { label: 'Insights', icon: 'insights' },
+  { label: 'Dashboard', icon: 'home' },
+  { label: 'Swipes', icon: 'swipes' },
+  { label: 'Goals', icon: 'goals' },
+] as const;
 
-export const MAP_LAYERS = ['All'] as const;
-export type MapLayerFilter = (typeof MAP_LAYERS)[number];
+export const CENTER_NAV_LABEL = 'Dashboard' as const;
 
-export const GOALS_TABS = ['Active', 'Communities', 'Challenges'] as const;
-export type GoalsTab = (typeof GOALS_TABS)[number];
-
-export const CHALLENGE_FILTERS = ['All', 'Personal', 'Community'] as const;
-export type ChallengeFilter = (typeof CHALLENGE_FILTERS)[number];
-
-export type GoalChallenge = {
-  title: string;
-  detail: string;
-  members: string;
-  type: 'personal' | 'community';
-};
-
-export const GOALS_CHALLENGES: GoalChallenge[] = [
-  { title: 'Campus Hydration Week', detail: 'Community goal: 10k cups logged', members: '248 joined', type: 'community' },
-  { title: 'Indoor Movement Streak', detail: 'When AQI is rough, move inside', members: '132 joined', type: 'community' },
-  { title: '7-Day Sleep Wind-Down', detail: 'Power down screens 30 minutes before bed', members: 'Solo plan', type: 'personal' },
-];
+export type NavItemLabel = (typeof NAV_ITEMS)[number]['label'];
+export type NavIconKey = (typeof NAV_ITEMS)[number]['icon'];

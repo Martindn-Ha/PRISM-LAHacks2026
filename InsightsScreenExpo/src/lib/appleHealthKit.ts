@@ -1,5 +1,16 @@
 import { NativeModules } from 'react-native';
 
+export type HealthKitWorkoutSample = {
+  activityId?: number;
+  activityName?: string;
+  calories?: number;
+  tracked?: boolean;
+  distance?: number;
+  start?: string;
+  end?: string;
+  duration?: number;
+};
+
 export type HealthKitApi = {
   Constants?: {
     Permissions?: Record<string, string>;
@@ -16,6 +27,10 @@ export type HealthKitApi = {
     callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
   ) => void;
   getHeartRateVariabilitySamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getWalkingHeartRateAverage?: (
     options: unknown,
     callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
   ) => void;
@@ -60,10 +75,6 @@ export type HealthKitApi = {
     options: unknown,
     callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
   ) => void;
-  getWeightSamples?: (
-    options: unknown,
-    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
-  ) => void;
   getVo2MaxSamples?: (
     options: unknown,
     callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
@@ -72,9 +83,9 @@ export type HealthKitApi = {
     options: unknown,
     callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
   ) => void;
-  getMindfulSession?: (
+  getAnchoredWorkouts?: (
     options: unknown,
-    callback: (error?: string, result?: Array<{ startDate?: string; endDate?: string }>) => void,
+    callback: (error?: string, result?: { anchor?: string; data?: HealthKitWorkoutSample[] }) => void,
   ) => void;
 };
 
@@ -83,6 +94,7 @@ const INSIGHTS_PERMISSION_NAMES = [
   'HeartRate',
   'RestingHeartRate',
   'HeartRateVariability',
+  'WalkingHeartRateAverage',
   'RespiratoryRate',
   'OxygenSaturation',
   'StepCount',
@@ -94,11 +106,10 @@ const INSIGHTS_PERMISSION_NAMES = [
   'AppleExerciseTime',
   'AppleStandTime',
   'SleepAnalysis',
-  'MindfulSession',
   'BodyTemperature',
-  'Weight',
   'Vo2Max',
   'BloodGlucose',
+  'Workout',
 ] as const;
 
 /**
