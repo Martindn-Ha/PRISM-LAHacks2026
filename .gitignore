@@ -6,6 +6,7 @@ yarn-error.log*
 pnpm-debug.log*
 
 # Local docs / scratch artifacts
+docs/
 AppIdea.docx
 AppIdea.txt
 Arista-Zetic-Workflow-Summary.txt

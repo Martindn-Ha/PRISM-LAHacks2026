@@ -1,40 +1,37 @@
-# LAHacks2026
+# PRISM
 
-Connected wellness demo app with:
-- Expo iOS client (`InsightsScreenExpo`)
-- Firebase Cloud Functions backend (`functions`)
-- Cloudinary media uploads
-- Firestore-backed community progress posts
-- Ticketmaster + Eventbrite event aggregation for Events + Map views
-- Optional geocoding fallback when providers return address text without coordinates
+Personal health insights app for iOS (Expo dev client) with optional Firebase Cloud Functions.
 
-## Project Structure
+- **Mobile app:** `InsightsScreenExpo/` — React Native / Expo, branded **PRISM** on device
+- **Backend:** `functions/` — HTTPS endpoints for nearby event context and community events
+- **Config:** `firebase.json`, `.firebaserc`
 
-- `InsightsScreenExpo/`: Expo React Native app
-- `functions/`: Firebase HTTPS functions
-- `firebase.json`, `.firebaserc`: Firebase project config
+## Features
 
-## Current Feature Set
+- **Dashboard** — configurable quick metrics (glucose, heart rate, sleep, steps, and more)
+- **Insights** — charts and detail views for Apple Health metrics
+- **Glucose** — Apple HealthKit and optional Dexcom Share; background sampling and spike alerts
+- **Location correlation** — background location trail to match glucose events with places
+- **Goals** — passive progress from Health data
+- **Medications** — daily checklist and calendar
+- **Personality** — on-device IPIP-120 questionnaire and scoring
+- **Data export** — CSV/ZIP export of selected Health metrics
+- **Optional Firebase** — Firestore progress posts and remote context when `EXPO_PUBLIC_FIREBASE_*` is set
 
-- **Progress Board pipeline**
-  - User can publish image-based progress posts.
-  - Image uploads to Cloudinary.
-  - Firestore stores post metadata.
-  - Cloudinary URL variants are derived for feed + thumbnail use.
-- **Community Events**
-  - `communityEvents` function merges Ticketmaster + Eventbrite.
-  - App Events tab renders live Upcoming/Past events.
-  - Event source links open in browser.
-- **Map integration**
-  - Map chips include `All`, `Ticketmaster`, and `Eventbrite`.
-  - Provider events are shown as map markers at event coordinates.
-  - If an event has address text but no coordinates, backend can geocode and fill lat/lon.
-- **Health/Insights**
-  - iOS Apple Health integration for Insights workflows.
+## Project structure
 
-## Environment Variables
+```
+InsightsScreenExpo/   Expo app (source lives here)
+functions/            Firebase Cloud Functions
+firebase.json         Firebase deploy config
+.firebaserc           Firebase project alias
+```
 
-Do not commit real `.env` files. Use the provided examples:
+Local docs and scratch notes live in `docs/` (gitignored).
+
+## Environment variables
+
+Do not commit real `.env` files. Copy from:
 
 - `InsightsScreenExpo/.env.example`
 - `functions/.env.example`
@@ -42,89 +39,109 @@ Do not commit real `.env` files. Use the provided examples:
 ### App (`InsightsScreenExpo/.env`)
 
 ```bash
-# Cloudinary
-EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME=
-EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET=
 EXPO_PUBLIC_COMMUNITY_SPOTLIGHT_IMAGE_URL=
-
-# Firebase Web App Config
 EXPO_PUBLIC_FIREBASE_API_KEY=
 EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=
 EXPO_PUBLIC_FIREBASE_PROJECT_ID=
 EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET=
 EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
 EXPO_PUBLIC_FIREBASE_APP_ID=
-
-# Backend endpoints
 EXPO_PUBLIC_ARISTA_CONTEXT_URL=
 EXPO_PUBLIC_ARISTA_COMMUNITY_EVENTS_URL=
 ```
 
+Firebase and backend URLs are optional; core Health workflows run on-device without them.
+
 ### Functions (`functions/.env`)
 
-```bash
-TICKETMASTER_API_KEY=
-EVENTBRITE_PRIVATE_TOKEN=
-# Optional; if omitted, fallback geocoder is used with stricter rate limits
-GOOGLE_MAPS_API_KEY=
-```
+Optional — only needed if you extend Cloud Functions beyond the defaults.
 
-## Local app run (dev client on a device)
+## Local development
 
-`npx expo prebuild` generates **native** projects under `ios/` and `android/` (not web-only). After you add or change native modules, run prebuild (or clean/regenerate those folders) so the native projects match `app.json` and your dependencies.
+`npx expo prebuild` generates native `ios/` and `android/` projects. Re-run after adding or changing native modules.
 
-From `InsightsScreenExpo/`, iOS dev client on a **connected physical device** (`--device`):
+From `InsightsScreenExpo/`, install the **development client** once on a physical iPhone (TestFlight builds cannot scan the dev QR):
 
 ```bash
-npx expo prebuild
-cd ios && pod install && cd ..
-npx expo start --dev-client --lan --clear
+npm install
+npx expo prebuild --platform ios
+npx expo run:ios --device
 ```
 
-In a second terminal:
+Daily dev (simulator or device — one Metro server):
 
 ```bash
-cd "/Users/adminpersonberg/Desktop/LAHacks2026/InsightsScreenExpo"
-npx expo run:ios --device --no-bundler
+npm start
 ```
 
-For a **physical Android device**, use `npx expo run:android --device` (after prebuild; use Gradle from `android/` as needed) instead of the `run:ios` line.
+Then in **that same terminal**:
 
-## Deploy Backend Functions
+- **Simulator:** press **`i`**
+- **Physical iPhone:** scan the QR in Camera, or in a second terminal run `npm run ios:device`
+
+Simulator-only native rebuild:
+
+```bash
+npm run ios
+```
+
+Physical device rebuild (Metro should already be running from `npm start`):
+
+```bash
+npm run ios:device
+```
+
+Android device: `npx expo run:android --device` after prebuild.
+
+## Tests
+
+From `InsightsScreenExpo/`:
+
+```bash
+npm run test:ipip
+npm run test:heart-rate-chart
+npm run test:glucose
+npm run test:export
+npm run test:health-events
+npm run test:location-trail
+npm run test:goals
+npm run test:medications
+```
+
+## Deploy backend functions
 
 From repo root:
-
-```bash
-npx firebase-tools deploy --only functions:communityEvents
-```
-
-Deploy all functions:
 
 ```bash
 npx firebase-tools deploy --only functions
 ```
 
-## Firebase Config: Commit vs Ignore
+Or a single function:
+
+```bash
+npx firebase-tools deploy --only functions:communityEvents
+```
+
+## Firebase: commit vs ignore
 
 Commit:
-- `firebase.json`
-- `.firebaserc`
-- `functions/package.json`
-- `functions/package-lock.json`
+
+- `firebase.json`, `.firebaserc`
+- `functions/package.json`, `functions/package-lock.json`
 
 Ignore:
-- `InsightsScreenExpo/.env`
-- `functions/.env`
-- local credentials/service account files
 
-## Apple HealthKit Notes (iOS)
+- `InsightsScreenExpo/.env`, `functions/.env`
+- service account and other credential files
 
-Ensure:
-- Testing on a real iPhone (not Expo Go only)
-- Xcode target has HealthKit capability enabled
-- `Info.plist` contains health usage descriptions
+## Apple HealthKit (iOS)
+
+- Use a real iPhone with the dev client (not Expo Go alone)
+- HealthKit capability enabled in the Xcode target
+- Usage descriptions in `Info.plist` (configured via `app.config.js`)
 
 Common issues:
-- **No script URL**: keep Metro running with `expo start --dev-client`.
-- **Missing HealthKit entitlement**: capability/signing mismatch.
-- **Untrusted developer app**: trust profile in iPhone settings.
+
+- **No script URL** — keep Metro running (`npm start` uses the dev client with `--scheme exp+prism`)
+- **Missing HealthKit entitlement** — capability or signing mismatch after prebuild
+- **Untrusted developer app** — trust the profile in iPhone Settings

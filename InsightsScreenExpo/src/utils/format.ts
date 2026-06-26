@@ -1,13 +1,7 @@
 export const formatEventSourceName = (source?: string | null) => {
   const normalized = (source ?? '').trim().toLowerCase();
-  if (normalized === 'ticketmaster') {
-    return 'Ticketmaster';
-  }
-  if (normalized === 'eventbrite') {
-    return 'Eventbrite';
-  }
   if (!normalized) {
-    return 'Ticketmaster';
+    return 'Community';
   }
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
@@ -18,7 +12,7 @@ export const toShareSlug = (value: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
-/** Text shown on the progress board: AI line + hashtags derived from tag slugs. */
+/** Text shown on the progress board: primary line + hashtags derived from tag slugs. */
 export const buildProgressPostDisplayCaption = (autoDescription: string, autoTags: string[]): string => {
   const body = (autoDescription ?? '').trim();
   const hashtags = autoTags

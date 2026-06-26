@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import type { AlertLogEvent } from '../types/experience';
-import { styles } from '../styles/appStyles';
+import { useDemoPalette } from '../context/DemoPaletteContext';
+import { useTypography } from '../context/TypographyContext';
+import { mergePaletteLayer } from '../theme/demoPaletteTheme';
 
 const LEVEL_COLOR: Record<AlertLogEvent['level'], string> = {
   info: '#7dd3fc',
@@ -30,21 +32,23 @@ function formatDisplayTime(iso: string): string {
 
 type LogsScreenProps = {
   events: AlertLogEvent[];
+  /** Hide title block when embedded (e.g. home alert button modal). */
+  omitHeading?: boolean;
 };
 
-export default function LogsScreen({ events }: LogsScreenProps) {
+export default function LogsScreen({ events, omitHeading = false }: LogsScreenProps) {
+  const { styles } = useTypography();
+  const { layers } = useDemoPalette();
   const rows = useMemo(
     () => [...events].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
     [events],
   );
 
   return (
-    <View style={styles.resourcesScreen}>
-      <Text style={styles.resourcesTitle}>Alert logs</Text>
-      <Text style={styles.resourcesSubtitle}>
-        Timeline of alert events from this session: high glucose, stress, or heart rate, recoveries, dismissals, and demo
-        push notifications.
-      </Text>
+    <View style={[mergePaletteLayer(layers, 'resourcesScreen', styles.resourcesScreen), omitHeading ? styles.resourcesScreenModalEmbed : null]}>
+      {omitHeading ? null : (
+        <Text style={mergePaletteLayer(layers, 'resourcesTitle', styles.resourcesTitle)}>Event Logs</Text>
+      )}
 
       <ScrollView
         bounces={false}
@@ -54,21 +58,31 @@ export default function LogsScreen({ events }: LogsScreenProps) {
         style={styles.resourcesScroll}
       >
         {rows.length === 0 ? (
-          <View style={[styles.glassCard, styles.resourcesCard, styles.logEventCard]}>
-            <Text style={styles.resourcesCardBody}>
-              No alert events yet. When metrics cross the advisor thresholds (glucose ≥170, stress ≥70, heart rate ≥95),
-              or you use demo alerts / dismiss a card, entries will appear here.
-            </Text>
-          </View>
+          <Text style={[mergePaletteLayer(layers, 'resourcesCardBody', styles.resourcesCardBody), styles.eventsEmptyText]}>
+            No events yet.
+          </Text>
         ) : null}
         {rows.map((e) => (
-          <View key={e.id} style={[styles.glassCard, styles.resourcesCard, styles.logEventCard]}>
+          <View key={e.id} style={[mergePaletteLayer(layers, 'glassCard', styles.glassCard), styles.resourcesCard, styles.logEventCard]}>
             <View style={styles.logEventHeader}>
-              <Text style={styles.logEventTime}>{formatDisplayTime(e.at)}</Text>
+              <Text style={mergePaletteLayer(layers, 'logEventTime', styles.logEventTime)}>{formatDisplayTime(e.at)}</Text>
               <Text style={[styles.logEventLevel, { color: LEVEL_COLOR[e.level] }]}>{e.level.toUpperCase()}</Text>
             </View>
-            <Text style={styles.logEventSource}>{e.source}</Text>
-            <Text style={styles.resourcesCardBody}>{e.message}</Text>
+            <Text style={mergePaletteLayer(layers, 'logEventSource', styles.logEventSource)}>{e.source}</Text>
+            <Text style={mergePaletteLayer(layers, 'resourcesCardBody', styles.resourcesCardBody)}>{e.message}</Text>
+            {e.glucoseAt ? (
+              <Text style={mergePaletteLayer(layers, 'logEventSource', styles.logEventSource)}>
+                Glucose time: {formatDisplayTime(e.glucoseAt)}
+              </Text>
+            ) : null}
+            {e.latitude != null && e.longitude != null ? (
+              <Text style={mergePaletteLayer(layers, 'logEventSource', styles.logEventSource)}>
+                Location: {e.latitude.toFixed(5)}, {e.longitude.toFixed(5)}
+                {e.locationAt ? ` · ${formatDisplayTime(e.locationAt)}` : ''}
+              </Text>
+            ) : e.glucoseAt ? (
+              <Text style={mergePaletteLayer(layers, 'logEventSource', styles.logEventSource)}>Location unavailable</Text>
+            ) : null}
           </View>
         ))}
       </ScrollView>

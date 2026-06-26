@@ -1,13 +1,3 @@
-export type DashboardValueDriftToggles = {
-  glucose: boolean;
-  stress: boolean;
-  heartRateCard: boolean;
-  steps: boolean;
-  sleep: boolean;
-  meds: boolean;
-  water: boolean;
-};
-
 export type ProgressPostStatus = 'processing' | 'ready' | 'failed';
 
 export type MediaVariants = {
@@ -54,20 +44,10 @@ export type CommunityEventItem = {
   sourceUrl?: string | null;
   source?: string | null;
   venue?: string | null;
-  /** Full street + locality from provider when available (Ticketmaster / Eventbrite venues). */
+  /** Full street + locality when available from the event listing. */
   address?: string | null;
   latitude?: number | null;
   longitude?: number | null;
-};
-
-export type MapScreenPin = {
-  id: string;
-  latitude: number;
-  longitude: number;
-  title: string;
-  subtitle: string;
-  pinColor?: string;
-  linkedEvent?: CommunityEventItem;
 };
 
 export type ProgressBoardPost = {
@@ -90,7 +70,7 @@ export type InviteContact = {
   phone: string | null;
 };
 
-/** Alert logs tab: one row per dashboard alert lifecycle event (threshold, recovery, dismiss, demo push). */
+/** Alert log row: one entry per dashboard alert lifecycle event (threshold, recovery, dismiss, demo push). Shown in home alert modal. */
 export type AlertLogLevel = 'info' | 'warn' | 'error' | 'debug';
 
 export type AlertLogEvent = {
@@ -99,4 +79,10 @@ export type AlertLogEvent = {
   level: AlertLogLevel;
   source: string;
   message: string;
+  glucoseValue?: number;
+  glucoseAt?: string;
+  latitude?: number;
+  longitude?: number;
+  locationAt?: string;
+  direction?: string;
 };

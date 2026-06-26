@@ -1,16 +1,17 @@
 import { NativeModules } from 'react-native';
-import * as AppleHealthKitModule from 'react-native-health';
-const moduleHealthKit = (AppleHealthKitModule as unknown as { default?: unknown; HealthKit?: unknown }).default
-  ?? (AppleHealthKitModule as unknown as { HealthKit?: unknown }).HealthKit
-  ?? AppleHealthKitModule;
-const nativeHealthKit = (NativeModules as { AppleHealthKit?: unknown }).AppleHealthKit;
-const rawHealthKit = (nativeHealthKit ?? moduleHealthKit) as Record<string, unknown>;
-const moduleConstants = (moduleHealthKit as { Constants?: unknown })?.Constants;
-if (!rawHealthKit.Constants && moduleConstants) {
-  rawHealthKit.Constants = moduleConstants;
-}
 
-export const healthKit = rawHealthKit as {
+export type HealthKitWorkoutSample = {
+  activityId?: number;
+  activityName?: string;
+  calories?: number;
+  tracked?: boolean;
+  distance?: number;
+  start?: string;
+  end?: string;
+  duration?: number;
+};
+
+export type HealthKitApi = {
   Constants?: {
     Permissions?: Record<string, string>;
     Units?: Record<string, string>;
@@ -26,6 +27,10 @@ export const healthKit = rawHealthKit as {
     callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
   ) => void;
   getHeartRateVariabilitySamples?: (
+    options: unknown,
+    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
+  ) => void;
+  getWalkingHeartRateAverage?: (
     options: unknown,
     callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
   ) => void;
@@ -70,10 +75,6 @@ export const healthKit = rawHealthKit as {
     options: unknown,
     callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
   ) => void;
-  getWeightSamples?: (
-    options: unknown,
-    callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
-  ) => void;
   getVo2MaxSamples?: (
     options: unknown,
     callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
@@ -82,8 +83,63 @@ export const healthKit = rawHealthKit as {
     options: unknown,
     callback: (error?: string, result?: Array<{ value?: number; startDate?: string; endDate?: string }>) => void,
   ) => void;
-  getMindfulSession?: (
+  getAnchoredWorkouts?: (
     options: unknown,
-    callback: (error?: string, result?: Array<{ startDate?: string; endDate?: string }>) => void,
+    callback: (error?: string, result?: { anchor?: string; data?: HealthKitWorkoutSample[] }) => void,
   ) => void;
 };
+
+/** Permission *names* in `react-native-health` Constants.Permissions used by Insights charts only (not the full library). */
+const INSIGHTS_PERMISSION_NAMES = [
+  'HeartRate',
+  'RestingHeartRate',
+  'HeartRateVariability',
+  'WalkingHeartRateAverage',
+  'RespiratoryRate',
+  'OxygenSaturation',
+  'StepCount',
+  'Steps',
+  'DistanceWalkingRunning',
+  'FlightsClimbed',
+  'ActiveEnergyBurned',
+  'BasalEnergyBurned',
+  'AppleExerciseTime',
+  'AppleStandTime',
+  'SleepAnalysis',
+  'BodyTemperature',
+  'Vo2Max',
+  'BloodGlucose',
+  'Workout',
+] as const;
+
+/**
+ * Read types for `initHealthKit` — keep this tight. Requesting every key from Permissions (~90+)
+ * often crashes or hangs native HealthKit / the RN bridge on device.
+ */
+export function buildInsightsHealthKitReadPermissions(permissions: Record<string, string>): string[] {
+  const values = INSIGHTS_PERMISSION_NAMES.map((k) => permissions[k]).filter(
+    (v): v is string => typeof v === 'string' && v.length > 0,
+  );
+  return [...new Set(values)];
+}
+
+function loadHealthKit(): Record<string, unknown> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const AppleHealthKitModule = require('react-native-health') as unknown;
+    const moduleHealthKit = (AppleHealthKitModule as { default?: unknown; HealthKit?: unknown }).default
+      ?? (AppleHealthKitModule as { HealthKit?: unknown }).HealthKit
+      ?? AppleHealthKitModule;
+    const nativeHealthKit = (NativeModules as { AppleHealthKit?: unknown }).AppleHealthKit;
+    const rawHealthKit = (nativeHealthKit ?? moduleHealthKit) as Record<string, unknown>;
+    const moduleConstants = (moduleHealthKit as { Constants?: unknown })?.Constants;
+    if (!rawHealthKit.Constants && moduleConstants) {
+      rawHealthKit.Constants = moduleConstants;
+    }
+    return rawHealthKit;
+  } catch {
+    return {};
+  }
+}
+
+export const healthKit = loadHealthKit() as HealthKitApi;

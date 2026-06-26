@@ -30,7 +30,7 @@ export function ActivityMiniIcon({ label }: { label: string }) {
 }
 
 export function InsightsBulbIcon({ active }: { active: boolean }) {
-  const color = active ? '#3b82f6' : '#52525b';
+  const color = active ? '#60a5fa' : '#71717a';
   return (
     <Svg height={26} viewBox="0 0 24 24" width={26}>
       <Path

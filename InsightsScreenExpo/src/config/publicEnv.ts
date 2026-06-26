@@ -1,5 +1,3 @@
-export const CLOUDINARY_CLOUD_NAME = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME ?? '';
-export const CLOUDINARY_UPLOAD_PRESET = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET ?? '';
 export const COMMUNITY_SPOTLIGHT_IMAGE_URL = process.env.EXPO_PUBLIC_COMMUNITY_SPOTLIGHT_IMAGE_URL?.trim() ?? '';
 export const ARISTA_CONTEXT_URL = process.env.EXPO_PUBLIC_ARISTA_CONTEXT_URL ?? '';
 export const ARISTA_COMMUNITY_EVENTS_URL =
@@ -18,8 +16,3 @@ export const FIREBASE_CONFIG = {
 };
 
 export const hasFirebaseConfig = Object.values(FIREBASE_CONFIG).every((value) => value.trim().length > 0);
-export const hasCloudinaryConfig =
-  CLOUDINARY_CLOUD_NAME.trim().length > 0 && CLOUDINARY_UPLOAD_PRESET.trim().length > 0;
-
-export const cloudinaryUploadEndpoint = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
-export const cloudinaryDeliveryBase = `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/upload`;

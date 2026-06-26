@@ -1,26 +1,22 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, { runOnJS, type SharedValue, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import {
-  QUICK_ACTION_THEME_COLOR_BY_TAB,
-  type InsightTab,
-} from '../../constants/insights';
+  dashboardQuickActionLabel,
+  dashboardQuickActionThemeColor,
+  isDashboardQuickActionMedications,
+  moveDashboardQuickAction,
+  type DashboardQuickAction,
+} from '../../constants/dashboardQuickActions';
+import { useDemoPalette } from '../../context/DemoPaletteContext';
+import { useTypography } from '../../context/TypographyContext';
+import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
 import { InsightTabIcon } from '../icons/InsightTabIcon';
-import { styles } from '../../styles/appStyles';
-
-export function moveDashboardQuickMetric(list: InsightTab[], from: number, to: number): InsightTab[] {
-  if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) {
-    return list;
-  }
-  const next = [...list];
-  const [removed] = next.splice(from, 1);
-  next.splice(to, 0, removed);
-  return next;
-}
 
 type DashboardQuickActionSlotProps = {
-  metric: InsightTab;
+  action: DashboardQuickAction;
   index: number;
   slotWidth: number;
   draggingIndexSV: SharedValue<number>;
@@ -31,7 +27,7 @@ type DashboardQuickActionSlotProps = {
 };
 
 function DashboardQuickActionSlot({
-  metric,
+  action,
   index,
   slotWidth,
   draggingIndexSV,
@@ -40,6 +36,10 @@ function DashboardQuickActionSlot({
   onPress,
   onDragCommit,
 }: DashboardQuickActionSlotProps) {
+  const { styles } = useTypography();
+  const { layers, theme } = useDemoPalette();
+  const quickIconGlyphColor = theme?.textMuted ?? '#a1a1aa';
+  const accentColor = dashboardQuickActionThemeColor(action);
   const onPressJS = useCallback(() => {
     onPress();
   }, [onPress]);
@@ -66,9 +66,6 @@ function DashboardQuickActionSlot({
 
     const pan = Gesture.Pan()
       .activateAfterLongPress(450)
-      .onStart(() => {
-        draggingIndexSV.value = index;
-      })
       .onUpdate((e) => {
         dragTranslationSV.value = e.translationX;
       })
@@ -123,16 +120,20 @@ function DashboardQuickActionSlot({
   return (
     <GestureDetector gesture={gesture}>
       <Reanimated.View
-        accessibilityHint="Long press, then drag sideways to reorder. Tap to open in Insights."
-        accessibilityLabel={`Quick action ${metric}`}
+        accessibilityHint="Long press, then drag sideways to reorder. Tap to open."
+        accessibilityLabel={`Quick action ${dashboardQuickActionLabel(action)}`}
         accessibilityRole="button"
         style={[styles.quickItem, animatedStyle]}
       >
-        <View style={[styles.quickIcon, { borderColor: QUICK_ACTION_THEME_COLOR_BY_TAB[metric] }]}>
-          <InsightTabIcon color="#cbd5e1" metric={metric} size={24} />
+        <View style={[mergePaletteLayer(layers, 'quickIcon', styles.quickIcon), { borderColor: accentColor }]}>
+          {isDashboardQuickActionMedications(action) ? (
+            <Ionicons color={quickIconGlyphColor} name="medkit-outline" size={28} />
+          ) : (
+            <InsightTabIcon color={quickIconGlyphColor} metric={action} size={28} />
+          )}
         </View>
-        <Text numberOfLines={1} style={styles.quickText}>
-          {metric}
+        <Text numberOfLines={1} style={mergePaletteLayer(layers, 'quickText', styles.quickText)}>
+          {dashboardQuickActionLabel(action)}
         </Text>
       </Reanimated.View>
     </GestureDetector>
@@ -140,12 +141,13 @@ function DashboardQuickActionSlot({
 }
 
 type DashboardQuickActionMetricsRowProps = {
-  metrics: InsightTab[];
-  onReorder: (next: InsightTab[]) => void;
-  onMetricPress: (metric: InsightTab) => void;
+  metrics: DashboardQuickAction[];
+  onReorder: (next: DashboardQuickAction[]) => void;
+  onMetricPress: (action: DashboardQuickAction) => void;
 };
 
 export function DashboardQuickActionMetricsRow({ metrics, onReorder, onMetricPress }: DashboardQuickActionMetricsRowProps) {
+  const { styles } = useTypography();
   const [slotWidth, setSlotWidth] = useState(0);
   const slotWidthSV = useSharedValue(0);
   const draggingIndexSV = useSharedValue(-1);
@@ -163,7 +165,7 @@ export function DashboardQuickActionMetricsRow({ metrics, onReorder, onMetricPre
       const delta = Math.round(translationX / w);
       const toIndex = Math.max(0, Math.min(fromIndex + delta, list.length - 1));
       if (toIndex !== fromIndex) {
-        onReorder(moveDashboardQuickMetric(list, fromIndex, toIndex));
+        onReorder(moveDashboardQuickAction(list, fromIndex, toIndex));
       }
     },
     [slotWidth, onReorder],
@@ -179,15 +181,15 @@ export function DashboardQuickActionMetricsRow({ metrics, onReorder, onMetricPre
       }}
       style={styles.quickRow}
     >
-      {metrics.map((metric, index) => (
+      {metrics.map((action, index) => (
         <DashboardQuickActionSlot
-          key={metric}
+          key={action}
+          action={action}
           dragTranslationSV={dragTranslationSV}
           draggingIndexSV={draggingIndexSV}
           index={index}
-          metric={metric}
           onDragCommit={handleDragCommit}
-          onPress={() => onMetricPress(metric)}
+          onPress={() => onMetricPress(action)}
           slotWidth={slotWidth}
           slotWidthSV={slotWidthSV}
         />
@@ -195,3 +197,5 @@ export function DashboardQuickActionMetricsRow({ metrics, onReorder, onMetricPre
     </View>
   );
 }
+
+export { moveDashboardQuickAction as moveDashboardQuickMetric };

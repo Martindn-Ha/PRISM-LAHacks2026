@@ -33,6 +33,14 @@ export function InsightTabIcon({ metric, color = '#cbd5e1', size = 22, strokeWid
           <Path {...common} d="M3 18h18" opacity={0.5} />
         </Svg>
       );
+    case 'Walking Heart Rate':
+      return (
+        <Svg height={size} viewBox="0 0 24 24" width={size}>
+          <Path {...common} d="M12 20.1s-6.4-4.4-8.4-7.5A4.9 4.9 0 0 1 12 6a4.9 4.9 0 0 1 8.4 6.6c-2 3.1-8.4 7.5-8.4 7.5Z" />
+          <Ellipse {...common} cx={7.5} cy={17.5} rx={1.8} ry={2.6} />
+          <Ellipse {...common} cx={14.8} cy={15.2} rx={2} ry={3} />
+        </Svg>
+      );
     case 'Respiratory Rate':
       return (
         <Svg height={size} viewBox="0 0 24 24" width={size}>
@@ -74,14 +82,14 @@ export function InsightTabIcon({ metric, color = '#cbd5e1', size = 22, strokeWid
           <Path {...common} d="m13.5 3.8-6 8h4l-1 8.4 6-8h-4l1-8.4Z" />
         </Svg>
       );
-    case 'Basal Energy':
+    case 'Resting Energy':
       return (
         <Svg height={size} viewBox="0 0 24 24" width={size}>
           <Circle {...common} cx={12} cy={12} r={6.4} />
           <Circle {...common} cx={12} cy={12} r={2.3} />
         </Svg>
       );
-    case 'Exercise Time':
+    case 'Exercise Minutes':
       return (
         <Svg height={size} viewBox="0 0 24 24" width={size}>
           <Circle {...common} cx={12} cy={13} r={6.6} />
@@ -89,7 +97,7 @@ export function InsightTabIcon({ metric, color = '#cbd5e1', size = 22, strokeWid
           <Path {...common} d="M9.2 4.8h5.6" />
         </Svg>
       );
-    case 'Stand Time':
+    case 'Stand Minutes':
       return (
         <Svg height={size} viewBox="0 0 24 24" width={size}>
           <Path {...common} d="M12 18.8V5.2" />
@@ -102,11 +110,22 @@ export function InsightTabIcon({ metric, color = '#cbd5e1', size = 22, strokeWid
           <Path {...common} d="M15.8 4.8a6.8 6.8 0 1 0 3.4 12.7A6.1 6.1 0 1 1 15.8 4.8Z" />
         </Svg>
       );
-    case 'Mindfulness':
+    case 'Workouts':
       return (
         <Svg height={size} viewBox="0 0 24 24" width={size}>
-          <Circle {...common} cx={12} cy={12} r={6.8} />
-          <Path {...common} d="M12 5.2c0 3.8-3 6.8-6.8 6.8M12 18.8c0-3.8 3-6.8 6.8-6.8" />
+          <Path {...common} d="M6.5 8.5 17.5 15.5M17.5 8.5 6.5 15.5" />
+          <Circle {...common} cx={6.5} cy={8.5} r={2.2} />
+          <Circle {...common} cx={17.5} cy={15.5} r={2.2} />
+        </Svg>
+      );
+    case 'Deep Sleep':
+    case 'REM Sleep':
+    case 'Core Sleep':
+      return (
+        <Svg height={size} viewBox="0 0 24 24" width={size}>
+          <Path {...common} d="M15.8 4.8a6.8 6.8 0 1 0 3.4 12.7A6.1 6.1 0 1 1 15.8 4.8Z" />
+          {metric === 'Deep Sleep' ? <Path {...common} d="M8 14h8" opacity={0.55} /> : null}
+          {metric === 'REM Sleep' ? <Path {...common} d="M7 12c2 2 8 2 10 0" opacity={0.55} /> : null}
         </Svg>
       );
     case 'Body Temperature':
@@ -117,14 +136,7 @@ export function InsightTabIcon({ metric, color = '#cbd5e1', size = 22, strokeWid
           <Rect {...common} height={8.6} rx={2} width={4} x={10} y={4.2} />
         </Svg>
       );
-    case 'Weight':
-      return (
-        <Svg height={size} viewBox="0 0 24 24" width={size}>
-          <Path {...common} d="M6 19.2h12a2.3 2.3 0 0 0 2.3-2.3v-5.8A5.8 5.8 0 0 0 14.5 5h-5A5.8 5.8 0 0 0 3.7 11v5.8A2.3 2.3 0 0 0 6 19.2Z" />
-          <Path {...common} d="M12 10.2v2.4M9.6 10.2h4.8" />
-        </Svg>
-      );
-    case 'VO2 Max':
+    case 'Cardio Fitness':
       return (
         <Svg height={size} viewBox="0 0 24 24" width={size}>
           <Path {...common} d="M12 20.1s-6.4-4.4-8.4-7.5A4.9 4.9 0 0 1 12 6a4.9 4.9 0 0 1 8.4 6.6c-2 3.1-8.4 7.5-8.4 7.5Z" />
