@@ -1,4 +1,4 @@
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import {
   insightTabLabel,
   QUICK_ACTION_THEME_COLOR_BY_TAB,
@@ -8,6 +8,7 @@ import { useDemoPalette } from '../../context/DemoPaletteContext';
 import { useTypography } from '../../context/TypographyContext';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
 import { InsightTabIcon } from '../icons/InsightTabIcon';
+import { TrackedPressable } from '../TrackedPressable';
 
 type InsightMetricCardProps = {
   metric: InsightTab;
@@ -31,7 +32,7 @@ export function InsightMetricCard({
   const bandColor = greyedOut ? '#64748b' : groupColor;
 
   return (
-    <Pressable
+    <TrackedPressable
       accessibilityHint="Opens metric details"
       accessibilityLabel={insightTabLabel(metric)}
       accessibilityRole="button"
@@ -43,6 +44,7 @@ export function InsightMetricCard({
         greyedOut && styles.insightsMetricCardGreyedOut,
         pressed && styles.insightsMetricCardPressed,
       ]}
+      trackId={`insights.metric.${metric}`}
     >
       <View style={[styles.insightsMetricCardBand, { backgroundColor: bandColor }]} />
       <View style={[styles.insightsMetricCardContent, fillHeight && styles.insightsMetricCardContentFill]}>
@@ -59,6 +61,6 @@ export function InsightMetricCard({
           {insightTabLabel(metric)}
         </Text>
       </View>
-    </Pressable>
+    </TrackedPressable>
   );
 }

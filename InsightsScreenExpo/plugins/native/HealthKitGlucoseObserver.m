@@ -32,7 +32,7 @@ RCT_EXPORT_MODULE();
   return self;
 }
 
-RCT_EXPORT_METHOD(startObserving:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXPORT_METHOD(startGlucoseObserver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
   if (!self.healthStore) {
     reject(@"healthkit_unavailable", @"HealthKit is not available on this device.", nil);
@@ -72,20 +72,13 @@ RCT_EXPORT_METHOD(startObserving:(RCTPromiseResolveBlock)resolve rejecter:(RCTPr
   }];
 }
 
-RCT_EXPORT_METHOD(stopObserving:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXPORT_METHOD(stopGlucoseObserver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
   if (self.observerQuery && self.healthStore) {
     [self.healthStore stopQuery:self.observerQuery];
     self.observerQuery = nil;
   }
   resolve(@(YES));
-}
-
-- (void)sendEventWithName:(NSString *)name body:(id)body
-{
-  if (self.hasListeners) {
-    [super sendEventWithName:name body:body];
-  }
 }
 
 @end

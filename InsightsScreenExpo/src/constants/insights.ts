@@ -382,39 +382,25 @@ export const INSIGHT_GROUPS = [
   },
 ] as const;
 
-/** All selectable dashboard quick-action metrics, including hub-nested tabs. */
+/**
+ * Dashboard quick-action picker options — one entry per Insights screen.
+ * Hub-nested metrics are omitted (they open the same detail as the hub root).
+ */
 export const DASHBOARD_QUICK_METRIC_PICKER_SECTIONS = [
   {
     title: 'Cardiovascular',
     color: '#7DA2C7',
-    tabs: [
-      'Heart Rate',
-      'Resting Heart Rate',
-      'Heart Rate Variability',
-      'Walking Heart Rate',
-      'Blood Oxygen',
-      'Respiratory Rate',
-    ] as InsightTab[],
+    tabs: ['Heart Rate', 'Blood Oxygen'] as InsightTab[],
   },
   {
     title: 'Activity / Energy',
     color: '#7CB89B',
-    tabs: [
-      'Steps',
-      'Walking + Running Distance',
-      'Flights Climbed',
-      'Active Energy',
-      'Resting Energy',
-      'Exercise Minutes',
-      'Stand Minutes',
-      'Workouts',
-      'Cardio Fitness',
-    ] as InsightTab[],
+    tabs: ['Steps', 'Active Energy', 'Exercise Minutes', 'Workouts'] as InsightTab[],
   },
   {
     title: 'Recovery',
     color: '#9B8FC6',
-    tabs: ['Sleep', 'Deep Sleep', 'REM Sleep', 'Core Sleep'] as InsightTab[],
+    tabs: ['Sleep'] as InsightTab[],
   },
   {
     title: 'Body Metrics',
@@ -578,13 +564,12 @@ export const QUICK_ACTION_METRIC_OPTIONS: InsightTab[] = [
   'Steps',
   'Sleep',
   'Heart Rate',
-  'Walking + Running Distance',
   'Active Energy',
   'Blood Glucose',
-  'Resting Heart Rate',
   'Exercise Minutes',
   'Blood Oxygen',
   'Workouts',
+  'Body Temperature',
 ];
 
 export const DASHBOARD_QUICK_ACTION_SLOTS = 3;
@@ -593,7 +578,7 @@ export function normalizeDashboardQuickMetrics(metrics: InsightTab[]): InsightTa
   const valid = new Set<InsightTab>();
   for (const metric of metrics) {
     if (INSIGHTS_TABS.includes(metric)) {
-      valid.add(metric);
+      valid.add(resolveInsightDetailTab(metric));
     }
   }
   const unique = [...valid].slice(0, DASHBOARD_QUICK_ACTION_SLOTS);

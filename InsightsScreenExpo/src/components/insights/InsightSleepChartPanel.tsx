@@ -231,6 +231,7 @@ export function InsightSleepChartPanel({ chart, pageWidth, showStageLanes = true
           timeOffset={timeOffset}
           yAxisSide={yAxisSide}
           yRange={fixedYRange}
+          trackId="insights.sleep.page"
         />
       </View>
     </View>

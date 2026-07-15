@@ -123,12 +123,14 @@ function resultFromHealthKit(
   const todayBucketIndex = bucketDates.length - 1;
   const todayAvg = trendPoints[todayBucketIndex] ?? 0;
   const rawReadings = mapHealthKitSamplesToReadings(samples);
-  const latestTimestampMs = rawReadings.length > 0 ? rawReadings[rawReadings.length - 1]!.startMs : 0;
+  const latestReading = rawReadings.length > 0 ? rawReadings[rawReadings.length - 1]! : null;
+  const latestTimestampMs = latestReading?.startMs ?? 0;
+  const latestValue = latestReading != null && latestReading.value > 0 ? latestReading.value : 0;
 
   return {
     source: samples.length > 0 ? 'healthkit' : 'none',
     sourceLabel: formatGlucoseSourceLabel(samples.length > 0 ? 'healthkit' : 'none', latestTimestampMs, nowMs),
-    currentValue: Math.round(todayAvg),
+    currentValue: latestValue > 0 ? Math.round(latestValue) : Math.round(todayAvg),
     trendPoints,
     rawReadings,
     latestTimestampMs,
@@ -143,23 +145,36 @@ export async function loadGlucoseData(options: {
 }): Promise<GlucoseLoadResult> {
   const { bucketDates, now, toDayKey, healthKit } = options;
   const nowMs = now.getTime();
-  const startDate = bucketDates[0]?.toISOString() ?? now.toISOString();
+  const sampleStart = new Date(bucketDates[0] ?? now);
+  sampleStart.setDate(sampleStart.getDate() - 14);
+  const startDate = sampleStart.toISOString();
   const endDate = now.toISOString();
-  const minutes = Math.ceil((nowMs - (bucketDates[0]?.getTime() ?? nowMs)) / 60000);
+  const minutes = Math.ceil((nowMs - sampleStart.getTime()) / 60000);
 
+  let dexcomSamples: GlucoseSample[] = [];
   const credentials = await getDexcomCredentials();
   if (credentials) {
     try {
-      const dexcomSamples = await fetchDexcomGlucoseSamples(credentials, minutes, 288);
+      dexcomSamples = await fetchDexcomGlucoseSamples(credentials, minutes, 288);
       const latestTimestampMs = dexcomSamples[dexcomSamples.length - 1]?.timestampMs ?? 0;
       if (dexcomSamples.length > 0 && isDexcomReadingFresh(latestTimestampMs, nowMs)) {
         return resultFromDexcom(dexcomSamples, bucketDates, toDayKey, nowMs);
       }
     } catch {
-      // Fall through to HealthKit.
+      // Fall through to HealthKit / stale Dexcom.
     }
   }
 
   const healthKitSamples = await loadHealthKitGlucoseSamples(healthKit, startDate, endDate);
-  return resultFromHealthKit(healthKitSamples, bucketDates, toDayKey, nowMs);
+  const fromHealthKit = resultFromHealthKit(healthKitSamples, bucketDates, toDayKey, nowMs);
+  if (fromHealthKit.currentValue > 0 || fromHealthKit.rawReadings.length > 0) {
+    return fromHealthKit;
+  }
+
+  // Prefer last known Dexcom reading over a blank card when Share data is stale.
+  if (dexcomSamples.length > 0) {
+    return resultFromDexcom(dexcomSamples, bucketDates, toDayKey, nowMs);
+  }
+
+  return fromHealthKit;
 }

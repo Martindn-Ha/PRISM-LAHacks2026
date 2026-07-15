@@ -31,24 +31,14 @@ describe('correlateGlucoseSamples', () => {
       { valueMgDl: 155, timestampMs: Date.parse('2026-06-22T14:05:00.000Z'), source: 'healthkit' as const },
     ];
 
-    const first = correlateGlucoseSamples(
-      samples,
-      'in_range',
-      () => ({ lat: 34.05, lng: -118.25, locationAt: '2026-06-22T14:04:00.000Z', gapMs: 60_000 }),
-      new Set(),
-    );
+    const first = correlateGlucoseSamples(samples, 'in_range', new Set());
 
     assert.equal(first.events.length, 1);
     assert.equal(first.events[0]?.direction, 'entered_high');
-    assert.equal(first.events[0]?.latitude, 34.05);
+    assert.match(first.events[0]?.message ?? '', /High glucose/);
     assert.equal(first.nextState, 'high');
 
-    const second = correlateGlucoseSamples(
-      samples,
-      'in_range',
-      () => null,
-      new Set(first.events.map((event) => event.id)),
-    );
+    const second = correlateGlucoseSamples(samples, 'in_range', new Set(first.events.map((event) => event.id)));
     assert.equal(second.events.length, 0);
   });
 
@@ -56,7 +46,7 @@ describe('correlateGlucoseSamples', () => {
     const samples = [
       { valueMgDl: 110, timestampMs: Date.parse('2026-06-22T15:00:00.000Z'), source: 'healthkit' as const },
     ];
-    const result = correlateGlucoseSamples(samples, 'high', () => null, new Set());
+    const result = correlateGlucoseSamples(samples, 'high', new Set());
     assert.equal(result.events.length, 1);
     assert.equal(result.events[0]?.direction, 'returned_in_range');
     assert.equal(result.nextState, 'in_range');

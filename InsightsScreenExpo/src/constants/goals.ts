@@ -1,5 +1,4 @@
 import {
-  DASHBOARD_QUICK_METRIC_PICKER_SECTIONS,
   INSIGHT_METRICS_UNLIKELY_APPLE_HEALTH,
   INSIGHT_UNITS,
   insightMetricHasAppleHealthData,
@@ -8,6 +7,47 @@ import {
   type InsightContent,
   type InsightTab,
 } from './insights';
+
+/** Goal picker keeps hub-nested metrics (distinct targets even on shared screens). */
+const GOAL_METRIC_PICKER_SECTIONS = [
+  {
+    title: 'Cardiovascular',
+    color: '#7DA2C7',
+    tabs: [
+      'Heart Rate',
+      'Resting Heart Rate',
+      'Heart Rate Variability',
+      'Walking Heart Rate',
+      'Blood Oxygen',
+      'Respiratory Rate',
+    ] as InsightTab[],
+  },
+  {
+    title: 'Activity / Energy',
+    color: '#7CB89B',
+    tabs: [
+      'Steps',
+      'Walking + Running Distance',
+      'Flights Climbed',
+      'Active Energy',
+      'Resting Energy',
+      'Exercise Minutes',
+      'Stand Minutes',
+      'Workouts',
+      'Cardio Fitness',
+    ] as InsightTab[],
+  },
+  {
+    title: 'Recovery',
+    color: '#9B8FC6',
+    tabs: ['Sleep', 'Deep Sleep', 'REM Sleep', 'Core Sleep'] as InsightTab[],
+  },
+  {
+    title: 'Body Metrics',
+    color: '#C7A77D',
+    tabs: ['Body Temperature', 'Blood Glucose'] as InsightTab[],
+  },
+] as const;
 
 export type GoalDirection = 'increase' | 'decrease' | 'in_range';
 export type GoalPeriod = 'daily' | 'weekly';
@@ -124,7 +164,7 @@ export function buildGoalPickerSections(
   insightContentByTab: Record<InsightTab, InsightContent>,
   healthKitReady: boolean,
 ) {
-  return DASHBOARD_QUICK_METRIC_PICKER_SECTIONS.map((section) => ({
+  return GOAL_METRIC_PICKER_SECTIONS.map((section) => ({
     ...section,
     tabs: section.tabs.filter((tab): tab is (typeof GOAL_ELIGIBLE_METRICS)[number] =>
       isGoalMetricAvailable(tab, insightContentByTab[tab], healthKitReady),

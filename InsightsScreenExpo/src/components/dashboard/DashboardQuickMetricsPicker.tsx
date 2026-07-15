@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
-import { Modal, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import {
   DASHBOARD_QUICK_ACTION_MEDICATIONS,
   dashboardQuickActionLabel,
@@ -19,6 +19,8 @@ import { useDemoPalette } from '../../context/DemoPaletteContext';
 import { useTypography } from '../../context/TypographyContext';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
 import { InsightTabIcon } from '../icons/InsightTabIcon';
+import { TrackedPressable } from '../TrackedPressable';
+import { TrackedTouchableOpacity } from '../TrackedTouchableOpacity';
 
 type Props = {
   visible: boolean;
@@ -58,7 +60,7 @@ export function DashboardQuickMetricsPicker({ visible, selected, onClose, onAppl
   const renderRow = (action: DashboardQuickAction, accent: string) => {
     const isSelected = draft.includes(action);
     return (
-      <TouchableOpacity
+      <TrackedTouchableOpacity
         key={action}
         accessibilityRole="checkbox"
         accessibilityState={{ checked: isSelected }}
@@ -67,6 +69,7 @@ export function DashboardQuickMetricsPicker({ visible, selected, onClose, onAppl
           mergePaletteLayer(layers, 'quickMetricsPickerRow', styles.quickMetricsPickerRow),
           isSelected && styles.quickMetricsPickerRowSelected,
         ]}
+        trackId={`dashboard.quickMetrics.toggle.${action}`}
       >
         <View style={[styles.quickMetricsPickerRowIcon, { borderColor: accent }]}>
           {isDashboardQuickActionMedications(action) ? (
@@ -82,13 +85,17 @@ export function DashboardQuickMetricsPicker({ visible, selected, onClose, onAppl
           {dashboardQuickActionLabel(action)}
         </Text>
         <Ionicons color={isSelected ? accent : mutedColor} name={isSelected ? 'checkmark-circle' : 'ellipse-outline'} size={22} />
-      </TouchableOpacity>
+      </TrackedTouchableOpacity>
     );
   };
 
   return (
     <Modal animationType="slide" onRequestClose={onClose} transparent visible={visible}>
-      <Pressable onPress={onClose} style={mergePaletteLayer(layers, 'quickMetricsPickerBackdrop', styles.quickMetricsPickerBackdrop)}>
+      <TrackedPressable
+        onPress={onClose}
+        style={mergePaletteLayer(layers, 'quickMetricsPickerBackdrop', styles.quickMetricsPickerBackdrop)}
+        trackId="dashboard.quickMetrics.backdrop"
+      >
         <Pressable onPress={() => {}} style={mergePaletteLayer(layers, 'quickMetricsPickerCard', styles.quickMetricsPickerCard)}>
           <View style={styles.quickMetricsPickerHeader}>
             <View style={styles.quickMetricsPickerHeaderText}>
@@ -99,9 +106,14 @@ export function DashboardQuickMetricsPicker({ visible, selected, onClose, onAppl
                 Choose {DASHBOARD_QUICK_ACTION_SLOTS} shortcuts for your dashboard
               </Text>
             </View>
-            <TouchableOpacity accessibilityLabel="Close metric picker" onPress={onClose} style={styles.quickMetricsPickerCloseBtn}>
+            <TrackedTouchableOpacity
+              accessibilityLabel="Close metric picker"
+              onPress={onClose}
+              style={styles.quickMetricsPickerCloseBtn}
+              trackId="dashboard.quickMetrics.close"
+            >
               <Ionicons color={mutedColor} name="close" size={22} />
-            </TouchableOpacity>
+            </TrackedTouchableOpacity>
           </View>
 
           <Text style={mergePaletteLayer(layers, 'quickMetricsPickerCount', styles.quickMetricsPickerCount)}>
@@ -135,11 +147,15 @@ export function DashboardQuickMetricsPicker({ visible, selected, onClose, onAppl
             </View>
           </ScrollView>
 
-          <TouchableOpacity onPress={handleDone} style={mergePaletteLayer(layers, 'quickMetricsPickerDoneBtn', styles.quickMetricsPickerDoneBtn)}>
+          <TrackedTouchableOpacity
+            onPress={handleDone}
+            style={mergePaletteLayer(layers, 'quickMetricsPickerDoneBtn', styles.quickMetricsPickerDoneBtn)}
+            trackId="dashboard.quickMetrics.done"
+          >
             <Text style={mergePaletteLayer(layers, 'quickMetricsPickerDoneText', styles.quickMetricsPickerDoneText)}>Done</Text>
-          </TouchableOpacity>
+          </TrackedTouchableOpacity>
         </Pressable>
-      </Pressable>
+      </TrackedPressable>
     </Modal>
   );
 }

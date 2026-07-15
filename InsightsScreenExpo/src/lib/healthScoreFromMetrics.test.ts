@@ -8,6 +8,8 @@ import {
   calculateGlucoseScore,
   calculateHeartRateScore,
   calculateOverallHealthScore,
+  getHealthScoreImpacts,
+  getHealthScoreShortfalls,
   calculateSleepScore,
   filterReadingsToDay,
   type TimestampedReading,
@@ -98,6 +100,39 @@ describe('calculateOverallHealthScore', () => {
   it('rounds final score to one decimal place', () => {
     const result = calculateOverallHealthScore(2 / 3, 2 / 3, 2 / 3);
     assert.equal(result.score, 66.7);
+  });
+});
+
+describe('getHealthScoreImpacts', () => {
+  it('attributes contribution and shortfall across available metrics', () => {
+    const impacts = getHealthScoreImpacts({ glucose: 1, sleep: 0.64, heartRate: 1 });
+    assert.deepEqual(impacts.glucose, { contribution: 33, shortfall: 0 });
+    assert.deepEqual(impacts.sleep, { contribution: 21, shortfall: 12 });
+    assert.deepEqual(impacts.heartRate, { contribution: 33, shortfall: 0 });
+  });
+
+  it('uses full weight when only one metric is available', () => {
+    const impacts = getHealthScoreImpacts({ glucose: null, sleep: 0.4, heartRate: null });
+    assert.equal(impacts.glucose, null);
+    assert.deepEqual(impacts.sleep, { contribution: 40, shortfall: 60 });
+    assert.equal(impacts.heartRate, null);
+  });
+});
+
+describe('getHealthScoreShortfalls', () => {
+  it('attributes the gap from 100 across available metrics', () => {
+    const shortfalls = getHealthScoreShortfalls({ glucose: 1, sleep: 0.64, heartRate: 1 });
+    assert.equal(shortfalls.glucose, 0);
+    assert.equal(shortfalls.sleep, 12);
+    assert.equal(shortfalls.heartRate, 0);
+  });
+
+  it('returns null shortfalls when no components are available', () => {
+    assert.deepEqual(getHealthScoreShortfalls({ glucose: null, sleep: null, heartRate: null }), {
+      glucose: null,
+      sleep: null,
+      heartRate: null,
+    });
   });
 });
 

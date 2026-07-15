@@ -6,7 +6,7 @@ import { classifyGlucoseState } from './healthEventCorrelator';
 export const HEALTH_EVENTS_STORAGE_KEY = 'prism.healthEvents.log';
 export const HEALTH_EVENTS_CURSOR_KEY = 'prism.healthEvents.cursor';
 export const HEALTH_EVENTS_STATE_KEY = 'prism.healthEvents.glucoseState';
-export const HEALTH_EVENTS_MAX_ROWS = 500;
+export const HEALTH_EVENTS_MAX_ROWS = 5000;
 
 function isValidEvent(raw: unknown): raw is HealthCorrelatedEvent {
   if (!raw || typeof raw !== 'object') {
@@ -101,9 +101,6 @@ export function toAlertLogEvents(events: HealthCorrelatedEvent[]) {
     message: event.message,
     glucoseValue: event.glucoseValue,
     glucoseAt: event.glucoseAt,
-    latitude: event.latitude,
-    longitude: event.longitude,
-    locationAt: event.locationAt,
     direction: event.direction,
   }));
 }

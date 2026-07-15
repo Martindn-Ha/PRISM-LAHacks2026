@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, Text, View } from 'react-native';
 import {
   IPIP_ANSWER_SCALE,
   IPIP_QUESTION_COUNT,
@@ -12,6 +12,8 @@ import { useIpipQuestionnaire } from '../hooks/useIpipQuestionnaire';
 import { useDemoPalette } from '../context/DemoPaletteContext';
 import { useTypography } from '../context/TypographyContext';
 import { mergePaletteLayer } from '../theme/demoPaletteTheme';
+import { TrackedPressable } from '../components/TrackedPressable';
+import { TrackedTouchableOpacity } from '../components/TrackedTouchableOpacity';
 
 function confirmRetakeQuestionnaire(onConfirm: () => void) {
   Alert.alert(
@@ -76,33 +78,34 @@ export default function PersonalityQuestionnaireScreen() {
               <Text style={mergePaletteLayer(layers, 'wellnessBody', styles.wellnessBody)}>
                 {answeredCount} of {IPIP_QUESTION_COUNT} answered
               </Text>
-              <TouchableOpacity onPress={resumeQuestionnaire} style={styles.wellnessPrimaryBtn}>
+              <TrackedTouchableOpacity onPress={resumeQuestionnaire} style={styles.wellnessPrimaryBtn} trackId="personality.resume">
                 <Text style={mergePaletteLayer(layers, 'wellnessPrimaryBtnText', styles.wellnessPrimaryBtnText)}>Resume</Text>
-              </TouchableOpacity>
+              </TrackedTouchableOpacity>
             </View>
           ) : null}
 
           {!hasProgress ? (
-            <TouchableOpacity onPress={startQuestionnaire} style={styles.wellnessPrimaryBtn}>
+            <TrackedTouchableOpacity onPress={startQuestionnaire} style={styles.wellnessPrimaryBtn} trackId="personality.begin">
               <Text style={mergePaletteLayer(layers, 'wellnessPrimaryBtnText', styles.wellnessPrimaryBtnText)}>Begin</Text>
-            </TouchableOpacity>
+            </TrackedTouchableOpacity>
           ) : (
-            <TouchableOpacity
+            <TrackedTouchableOpacity
               onPress={() => {
                 confirmRetakeQuestionnaire(() => {
                   void restart().then(() => startQuestionnaire());
                 });
               }}
               style={styles.wellnessSecondaryBtn}
+              trackId="personality.startOver"
             >
               <Text style={mergePaletteLayer(layers, 'wellnessSecondaryBtnText', styles.wellnessSecondaryBtnText)}>Start over</Text>
-            </TouchableOpacity>
+            </TrackedTouchableOpacity>
           )}
 
           {isDone ? (
-            <TouchableOpacity onPress={viewResults} style={styles.wellnessSecondaryBtn}>
+            <TrackedTouchableOpacity onPress={viewResults} style={styles.wellnessSecondaryBtn} trackId="personality.viewResults">
               <Text style={mergePaletteLayer(layers, 'wellnessSecondaryBtnText', styles.wellnessSecondaryBtnText)}>View your results</Text>
-            </TouchableOpacity>
+            </TrackedTouchableOpacity>
           ) : null}
         </ScrollView>
       </View>
@@ -137,12 +140,13 @@ export default function PersonalityQuestionnaireScreen() {
             </View>
           ))}
 
-          <TouchableOpacity
+          <TrackedTouchableOpacity
             onPress={() => confirmRetakeQuestionnaire(() => void restart())}
             style={styles.wellnessSecondaryBtn}
+            trackId="personality.retake"
           >
             <Text style={mergePaletteLayer(layers, 'wellnessSecondaryBtnText', styles.wellnessSecondaryBtnText)}>Retake questionnaire</Text>
-          </TouchableOpacity>
+          </TrackedTouchableOpacity>
         </ScrollView>
       </View>
     );
@@ -158,10 +162,10 @@ export default function PersonalityQuestionnaireScreen() {
         </View>
         <View style={styles.wellnessQuestionMetaRow}>
           {currentIndex > 0 ? (
-            <Pressable accessibilityRole="button" hitSlop={8} onPress={goBack} style={styles.wellnessBackBtn}>
+            <TrackedPressable accessibilityRole="button" hitSlop={8} onPress={goBack} style={styles.wellnessBackBtn} trackId="personality.back">
               <Ionicons color={theme?.textSecondary ?? '#94a3b8'} name="chevron-back" size={20} />
               <Text style={mergePaletteLayer(layers, 'wellnessHint', styles.wellnessHint)}>Back</Text>
-            </Pressable>
+            </TrackedPressable>
           ) : (
             <View />
           )}
@@ -184,7 +188,7 @@ export default function PersonalityQuestionnaireScreen() {
           {IPIP_ANSWER_SCALE.map((option) => {
             const selected = currentAnswer === option.value;
             return (
-              <TouchableOpacity
+              <TrackedTouchableOpacity
                 key={option.value}
                 accessibilityRole="button"
                 accessibilityState={{ selected }}
@@ -194,6 +198,7 @@ export default function PersonalityQuestionnaireScreen() {
                   mergePaletteLayer(layers, 'wellnessAnswerBtn', styles.wellnessAnswerBtn),
                   selected && mergePaletteLayer(layers, 'wellnessAnswerBtnSelected', styles.wellnessAnswerBtnSelected),
                 ]}
+                trackId={`personality.answer.${option.value}`}
               >
                 <Text
                   style={[
@@ -203,7 +208,7 @@ export default function PersonalityQuestionnaireScreen() {
                 >
                   {option.label}
                 </Text>
-              </TouchableOpacity>
+              </TrackedTouchableOpacity>
             );
           })}
         </View>

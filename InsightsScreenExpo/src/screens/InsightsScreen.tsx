@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, InteractionManager, Platform, RefreshControl, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, InteractionManager, Platform, RefreshControl, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -24,8 +24,11 @@ import {
   loadActiveMedicationSchedules,
   softDeleteMedicationSchedule,
   toggleMedicationScheduleTaken,
+  updateMedicationSchedule,
 } from '../lib/medicationsStorage';
+import { syncAllMedicationNotifications } from '../lib/medicationNotifications';
 import { mergePaletteLayer } from '../theme/demoPaletteTheme';
+import { TrackedTouchableOpacity } from '../components/TrackedTouchableOpacity';
 
 type Props = any;
 
@@ -64,6 +67,7 @@ export default function InsightsScreen(props: Props) {
   const refreshMedications = useCallback(async () => {
     const rows = await loadActiveMedicationSchedules();
     setSchedules(rows);
+    void syncAllMedicationNotifications(rows);
   }, []);
 
   useEffect(() => {
@@ -202,7 +206,7 @@ export default function InsightsScreen(props: Props) {
                 </View>
               </View>
               {Platform.OS === 'ios' && healthKitStatus === 'denied' ? (
-                <TouchableOpacity
+                <TrackedTouchableOpacity
                   disabled={healthKitLoading}
                   onPress={() => {
                     setHealthKitStatus('idle');
@@ -214,11 +218,12 @@ export default function InsightsScreen(props: Props) {
                     mergePaletteLayer(layers, 'healthConnectBtn', styles.healthConnectBtn),
                     healthKitLoading && styles.healthConnectBtnDisabled,
                   ]}
+                  trackId="insights.connectAppleHealth"
                 >
                   <Text style={mergePaletteLayer(layers, 'healthConnectBtnText', styles.healthConnectBtnText)}>
                     {healthKitLoading ? 'Connecting...' : 'Connect Apple Health'}
                   </Text>
-                </TouchableOpacity>
+                </TrackedTouchableOpacity>
               ) : null}
               {healthKitLastError ? <Text style={mergePaletteLayer(layers, 'healthErrorText', styles.healthErrorText)}>{healthKitLastError}</Text> : null}
               <View style={styles.insightsMetricSectionsStack}>
@@ -241,29 +246,22 @@ export default function InsightsScreen(props: Props) {
                 mergePaletteLayer(layers, 'insightsDetailScreen', styles.insightsDetailOverlay),
               ]}
             >
-              <ScrollView
-                bounces={Platform.OS === 'ios'}
-                contentContainerStyle={[
-                  mergePaletteLayer(layers, 'insightsDetailScrollContent', styles.insightsDetailScrollContent),
-                  { paddingHorizontal: horizontalInset },
-                ]}
-                keyboardShouldPersistTaps="handled"
-                nestedScrollEnabled
-                overScrollMode="never"
-                showsVerticalScrollIndicator={false}
-                style={mergePaletteLayer(layers, 'insightsDetailScroll', styles.insightsDetailScroll)}
-              >
-                <View style={styles.insightsDetailHeader}>
-                  <TouchableOpacity onPress={handleMedicationsDetailBack} style={styles.insightsBackBtn}>
-                    <Ionicons name="chevron-back" size={20} color={theme?.textPrimary ?? '#f8fafc'} />
-                  </TouchableOpacity>
-                  <View style={styles.insightsDetailHeaderText}>
-                    <Text style={mergePaletteLayer(layers, 'insightsTitle', styles.insightsTitle)}>Medications</Text>
-                  </View>
+              <View style={[styles.insightsDetailHeader, { paddingHorizontal: horizontalInset }]}>
+                <TrackedTouchableOpacity onPress={handleMedicationsDetailBack} style={styles.insightsBackBtn} trackId="insights.medications.back">
+                  <Ionicons name="chevron-back" size={20} color={theme?.textPrimary ?? '#f8fafc'} />
+                </TrackedTouchableOpacity>
+                <View style={styles.insightsDetailHeaderText}>
+                  <Text style={mergePaletteLayer(layers, 'insightsTitle', styles.insightsTitle)}>Medications</Text>
                 </View>
+              </View>
+              <View style={{ flex: 1, paddingHorizontal: horizontalInset }}>
                 <InsightMedicationsDetail
-                  onAddSchedule={async (dayKey, name, timeLabel) => {
-                    await createMedicationSchedule({ dayKey, name, timeLabel });
+                  onAddSchedule={async (dayKey, draft) => {
+                    await createMedicationSchedule({ dayKey, ...draft });
+                    await refreshMedications();
+                  }}
+                  onUpdateSchedule={async (id, dayKey, draft) => {
+                    await updateMedicationSchedule({ id, dayKey, ...draft });
                     await refreshMedications();
                   }}
                   onDeleteSchedule={async (id) => {
@@ -276,7 +274,7 @@ export default function InsightsScreen(props: Props) {
                   }}
                   schedules={schedules}
                 />
-              </ScrollView>
+              </View>
             </View>
           ) : null}
           {activeInsightTab != null && !medicationsDetailOpen ? (
@@ -311,9 +309,9 @@ export default function InsightsScreen(props: Props) {
                 style={mergePaletteLayer(layers, 'insightsDetailScroll', styles.insightsDetailScroll)}
               >
                   <View style={styles.insightsDetailHeader}>
-                    <TouchableOpacity onPress={onInsightDetailBack} style={styles.insightsBackBtn}>
+                    <TrackedTouchableOpacity onPress={onInsightDetailBack} style={styles.insightsBackBtn} trackId="insights.detail.back">
                       <Ionicons name="chevron-back" size={20} color={theme?.textPrimary ?? '#f8fafc'} />
-                    </TouchableOpacity>
+                    </TrackedTouchableOpacity>
                     <View style={styles.insightsDetailHeaderText}>
                       <Text style={mergePaletteLayer(layers, 'insightsTitle', styles.insightsTitle)}>{insightTabLabel(activeInsightTab)}</Text>
                     </View>

@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Animated, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Text, View } from 'react-native';
 import { useDemoPalette } from '../../context/DemoPaletteContext';
 import { useTypography } from '../../context/TypographyContext';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
 import { useAppChrome } from '../../hooks/useAppChrome';
+import { TrackedTouchableOpacity } from '../TrackedTouchableOpacity';
 
 type Props = {
   activeTab: string;
@@ -29,15 +30,16 @@ export function AppHeader({
     <View style={[mergePaletteLayer(layers, 'appHeader', styles.appHeader), { paddingTop: headerPaddingTop }]}>
       <View style={styles.appHeaderRow}>
         <View style={styles.appHeaderSide}>
-          <TouchableOpacity
+          <TrackedTouchableOpacity
             accessibilityLabel="Open menu"
             accessibilityRole="button"
             hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
             onPress={onMenuPress}
             style={mergePaletteLayer(layers, 'appHeaderMenuBtn', styles.appHeaderMenuBtn)}
+            trackId="header.menu"
           >
             <Ionicons color={iconColor} name="menu" size={24} />
-          </TouchableOpacity>
+          </TrackedTouchableOpacity>
         </View>
 
         <View style={styles.appHeaderTitleWrap}>
@@ -45,12 +47,13 @@ export function AppHeader({
         </View>
 
         <View style={[styles.appHeaderSide, styles.appHeaderSideRight]}>
-          <TouchableOpacity
+          <TrackedTouchableOpacity
             accessibilityLabel={alertCount > 0 ? `${alertCount} events` : 'Event logs'}
             accessibilityRole="button"
             hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
             onPress={onAlertsPress}
             style={styles.appHeaderAlertBtn}
+            trackId="header.alerts"
           >
             <View>
               <Ionicons color={theme.accent} name={alertCount > 0 ? 'notifications' : 'notifications-outline'} size={26} />
@@ -80,7 +83,7 @@ export function AppHeader({
                 </Animated.View>
               ) : null}
             </View>
-          </TouchableOpacity>
+          </TrackedTouchableOpacity>
         </View>
       </View>
     </View>

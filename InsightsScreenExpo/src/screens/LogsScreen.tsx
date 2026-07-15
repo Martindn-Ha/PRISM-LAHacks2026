@@ -75,14 +75,6 @@ export default function LogsScreen({ events, omitHeading = false }: LogsScreenPr
                 Glucose time: {formatDisplayTime(e.glucoseAt)}
               </Text>
             ) : null}
-            {e.latitude != null && e.longitude != null ? (
-              <Text style={mergePaletteLayer(layers, 'logEventSource', styles.logEventSource)}>
-                Location: {e.latitude.toFixed(5)}, {e.longitude.toFixed(5)}
-                {e.locationAt ? ` · ${formatDisplayTime(e.locationAt)}` : ''}
-              </Text>
-            ) : e.glucoseAt ? (
-              <Text style={mergePaletteLayer(layers, 'logEventSource', styles.logEventSource)}>Location unavailable</Text>
-            ) : null}
           </View>
         ))}
       </ScrollView>

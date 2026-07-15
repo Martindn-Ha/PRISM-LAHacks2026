@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { createContext, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, useWindowDimensions, View, type ViewStyle } from 'react-native';
+import { Platform, StyleSheet, Text, useWindowDimensions, View, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
   cancelAnimation,
@@ -16,6 +16,8 @@ import { useDemoPalette } from '../context/DemoPaletteContext';
 import { mergePaletteLayer } from '../theme/demoPaletteTheme';
 import { useTypography } from '../context/TypographyContext';
 import { scaleStyleRecord } from '../theme/typography';
+import { logUiInteraction } from '../lib/uiInteractionLog';
+import { TrackedPressable } from '../components/TrackedPressable';
 
 export type DemoSwipeCategory = 'nutrition' | 'activity' | 'recovery' | 'mindfulness' | 'habits';
 
@@ -304,7 +306,7 @@ function SwipeScreenEdge({
   });
 
   return (
-    <Pressable
+    <TrackedPressable
       accessibilityLabel={side === 'left' ? 'Skip this meal' : 'Save this meal'}
       accessibilityRole="button"
       hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
@@ -314,6 +316,7 @@ function SwipeScreenEdge({
         side === 'left' ? local.edgeHitLeft : local.edgeHitRight,
         { height: slotHeight },
       ]}
+      trackId={side === 'left' ? 'swipes.nudge.left' : 'swipes.nudge.right'}
     >
       <Reanimated.View
         pointerEvents="none"
@@ -324,7 +327,7 @@ function SwipeScreenEdge({
           glowStyle,
         ]}
       />
-    </Pressable>
+    </TrackedPressable>
   );
 }
 
@@ -437,12 +440,18 @@ export default function SwipesScreen() {
   const cardWidth = Math.min(width - 32, 348);
 
   const onSwipedLeft = useCallback(() => {
+    if (current) {
+      logUiInteraction({ gesture: 'swipe', target: `swipes.card.${current.id}`, direction: 'left' });
+    }
     setDeck((d) => d.slice(1));
-  }, []);
+  }, [current]);
 
   const onSwipedRight = useCallback(() => {
+    if (current) {
+      logUiInteraction({ gesture: 'swipe', target: `swipes.card.${current.id}`, direction: 'right' });
+    }
     setDeck((d) => d.slice(1));
-  }, []);
+  }, [current]);
 
   const restart = useCallback(() => {
     setDeck([...DEMO_SWIPE_DECK]);
@@ -523,9 +532,9 @@ export default function SwipesScreen() {
             <View style={[local.emptyCard, local.glassOutline]}>
               <Text style={local.emptyTitle}>You're caught up</Text>
               <Text style={local.emptyBody}>Reload the demo deck to keep swiping.</Text>
-              <Pressable accessibilityRole="button" onPress={restart} style={local.restartBtn}>
+              <TrackedPressable accessibilityRole="button" onPress={restart} style={local.restartBtn} trackId="swipes.restart">
                 <Text style={local.restartBtnText}>Shuffle demo again</Text>
-              </Pressable>
+              </TrackedPressable>
             </View>
           ) : (
             <View style={[local.deckCluster, { width: cardWidth }]}>

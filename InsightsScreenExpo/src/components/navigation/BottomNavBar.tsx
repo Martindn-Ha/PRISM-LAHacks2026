@@ -1,12 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
-import { Animated, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Text, View } from 'react-native';
 import { CENTER_NAV_LABEL, NAV_ITEMS, type NavIconKey, type NavItemLabel } from '../../constants/appNavigation';
 import { useDemoPalette } from '../../context/DemoPaletteContext';
 import { useTypography } from '../../context/TypographyContext';
 import { InsightsBulbIcon } from '../icons/WellnessIcons';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
 import { useAppChrome } from '../../hooks/useAppChrome';
+import { TrackedTouchableOpacity } from '../TrackedTouchableOpacity';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -70,12 +71,13 @@ export function BottomNavBar({ activeTab, alertCount, alertBadgeBounceAnim, onTa
           const iconColor = isActive ? activeColor : inactiveColor;
 
           return (
-            <TouchableOpacity
+            <TrackedTouchableOpacity
               key={item.label}
               accessibilityRole="tab"
               accessibilityState={{ selected: isActive }}
               onPress={() => onTabPress(item.label)}
               style={styles.navItem}
+              trackId={`nav.${item.label}`}
             >
               <View style={[styles.navItemInner, isActive && styles.navItemInnerActive]}>
                 <View style={styles.navIconWrap}>
@@ -91,13 +93,13 @@ export function BottomNavBar({ activeTab, alertCount, alertBadgeBounceAnim, onTa
                   {item.label}
                 </Text>
               </View>
-            </TouchableOpacity>
+            </TrackedTouchableOpacity>
           );
         })}
       </View>
 
       {centerTab ? (
-        <TouchableOpacity
+        <TrackedTouchableOpacity
           accessibilityRole="tab"
           accessibilityState={{ selected: isCenterActive }}
           accessibilityLabel={centerTab.label}
@@ -112,6 +114,7 @@ export function BottomNavBar({ activeTab, alertCount, alertBadgeBounceAnim, onTa
             },
             isCenterActive && styles.navCenterButtonActive,
           ]}
+          trackId={`nav.${centerTab.label}`}
         >
           {alertCount > 0 ? (
             <Animated.View
@@ -140,7 +143,7 @@ export function BottomNavBar({ activeTab, alertCount, alertBadgeBounceAnim, onTa
             </Animated.View>
           ) : null}
           <NavIcon color={centerIconColor} icon={centerTab.icon} isActive={isCenterActive} size={28} />
-        </TouchableOpacity>
+        </TrackedTouchableOpacity>
       ) : null}
     </View>
   );

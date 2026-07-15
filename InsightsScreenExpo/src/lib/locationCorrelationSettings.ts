@@ -1,22 +1,7 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 
-export const LOCATION_CORRELATION_ENABLED_KEY = 'prism.locationCorrelation.enabled';
-export const LOCATION_TRAIL_TASK_NAME = 'PRISM_LOCATION_TRAIL_TASK';
-
-export async function isLocationCorrelationEnabled(): Promise<boolean> {
-  try {
-    const raw = await AsyncStorage.getItem(LOCATION_CORRELATION_ENABLED_KEY);
-    return raw === 'true';
-  } catch {
-    return false;
-  }
-}
-
-export async function setLocationCorrelationEnabled(enabled: boolean): Promise<void> {
-  await AsyncStorage.setItem(LOCATION_CORRELATION_ENABLED_KEY, enabled ? 'true' : 'false');
-}
+export const LOCATION_LOG_TASK_NAME = 'PRISM_LOCATION_LOG_TASK';
 
 export async function requestLocationPermissions(): Promise<boolean> {
   const foreground = await Location.requestForegroundPermissionsAsync();
@@ -27,51 +12,54 @@ export async function requestLocationPermissions(): Promise<boolean> {
   return background.status === 'granted';
 }
 
-export async function startLocationTrailUpdates(): Promise<boolean> {
-  const enabled = await isLocationCorrelationEnabled();
-  if (!enabled) {
-    return false;
-  }
-
+export async function startLocationUpdates(): Promise<boolean> {
   const hasPermission = await requestLocationPermissions();
   if (!hasPermission) {
     return false;
   }
 
-  const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TRAIL_TASK_NAME);
+  const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_LOG_TASK_NAME);
   if (started) {
     return true;
   }
 
-  await Location.startLocationUpdatesAsync(LOCATION_TRAIL_TASK_NAME, {
+  await Location.startLocationUpdatesAsync(LOCATION_LOG_TASK_NAME, {
     accuracy: Location.Accuracy.Balanced,
     timeInterval: 10 * 60 * 1000,
     distanceInterval: 100,
     showsBackgroundLocationIndicator: true,
     pausesUpdatesAutomatically: true,
     foregroundService: {
-      notificationTitle: 'PRISM location trail',
-      notificationBody: 'Logging location to correlate with glucose events.',
+      notificationTitle: 'PRISM location',
+      notificationBody: 'Logging location for health context.',
     },
   });
   return true;
 }
 
-export async function stopLocationTrailUpdates(): Promise<void> {
-  const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TRAIL_TASK_NAME);
+export async function stopLocationUpdates(): Promise<void> {
+  const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_LOG_TASK_NAME);
   if (started) {
-    await Location.stopLocationUpdatesAsync(LOCATION_TRAIL_TASK_NAME);
+    await Location.stopLocationUpdatesAsync(LOCATION_LOG_TASK_NAME);
+  }
+  // Stop legacy task name if still registered from older builds.
+  try {
+    const legacyStarted = await Location.hasStartedLocationUpdatesAsync('PRISM_LOCATION_TRAIL_TASK');
+    if (legacyStarted) {
+      await Location.stopLocationUpdatesAsync('PRISM_LOCATION_TRAIL_TASK');
+    }
+  } catch {
+    // Ignore legacy cleanup failures.
   }
 }
 
 export async function enableLocationCorrelation(): Promise<{ ok: boolean; reason?: string }> {
-  await setLocationCorrelationEnabled(true);
   const granted = await requestLocationPermissions();
   if (!granted) {
     return { ok: false, reason: 'Location permission was not granted.' };
   }
   try {
-    await startLocationTrailUpdates();
+    await startLocationUpdates();
     return { ok: true };
   } catch (error) {
     return {
@@ -81,12 +69,6 @@ export async function enableLocationCorrelation(): Promise<{ ok: boolean; reason
   }
 }
 
-export async function disableLocationCorrelation(clearTrail: () => Promise<void>): Promise<void> {
-  await setLocationCorrelationEnabled(false);
-  await stopLocationTrailUpdates();
-  await clearTrail();
-}
-
-export function isLocationTrailTaskDefined(): boolean {
-  return TaskManager.isTaskDefined(LOCATION_TRAIL_TASK_NAME);
+export function isLocationLogTaskDefined(): boolean {
+  return TaskManager.isTaskDefined(LOCATION_LOG_TASK_NAME);
 }

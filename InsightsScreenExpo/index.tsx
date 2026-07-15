@@ -1,5 +1,5 @@
 // Background tasks must load before the app root renders.
-import './src/tasks/locationTrailTask';
+import './src/tasks/locationLogTask';
 import './src/tasks/backgroundGlucoseTask';
 import 'react-native-gesture-handler';
 import { registerRootComponent } from 'expo';

@@ -107,8 +107,13 @@ function timeWeightedFractionInRange(
 export function mapHealthKitSamplesToReadings(samples: HealthKitValueSample[]): TimestampedReading[] {
   return samples
     .map((sample) => {
-      const value = sample.value ?? 0;
-      const startMs = sample.startDate ? new Date(sample.startDate).getTime() : 0;
+      const raw = sample.value;
+      const value = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : 0;
+      const startMs = sample.startDate
+        ? new Date(sample.startDate).getTime()
+        : sample.endDate
+          ? new Date(sample.endDate).getTime()
+          : 0;
       const endMs = sample.endDate ? new Date(sample.endDate).getTime() : startMs;
       if (!startMs || !Number.isFinite(value) || value <= 0) {
         return null;
@@ -193,4 +198,60 @@ export function calculateOverallHealthScore(
   const average = available.reduce((sum, score) => sum + score, 0) / available.length;
   const score = Math.round(average * 100 * 10) / 10;
   return { score, components };
+}
+
+export type HealthScoreMetricImpact = {
+  /** Points this metric adds toward today’s overall score. */
+  contribution: number;
+  /** Points this metric costs vs a perfect 100 (equal weight). */
+  shortfall: number;
+};
+
+export type HealthScoreImpacts = {
+  glucose: HealthScoreMetricImpact | null;
+  sleep: HealthScoreMetricImpact | null;
+  heartRate: HealthScoreMetricImpact | null;
+};
+
+/** @deprecated Prefer getHealthScoreImpacts; kept for older call sites/tests. */
+export type HealthScoreShortfalls = {
+  glucose: number | null;
+  sleep: number | null;
+  heartRate: number | null;
+};
+
+/**
+ * Points each available metric adds (contribution) and costs vs a perfect 100 (shortfall).
+ * Sum of contributions ≈ overall score; sum of shortfalls ≈ 100 − overall.
+ */
+export function getHealthScoreImpacts(components: ComponentScores): HealthScoreImpacts {
+  const keys = ['glucose', 'sleep', 'heartRate'] as const;
+  const available = keys.filter((key) => {
+    const score = components[key];
+    return score != null && Number.isFinite(score);
+  });
+  const n = available.length;
+  const impacts: HealthScoreImpacts = { glucose: null, sleep: null, heartRate: null };
+  if (n === 0) {
+    return impacts;
+  }
+
+  const weight = 100 / n;
+  for (const key of available) {
+    const score = components[key]!;
+    impacts[key] = {
+      contribution: Math.round(score * weight),
+      shortfall: Math.round((1 - score) * weight),
+    };
+  }
+  return impacts;
+}
+
+export function getHealthScoreShortfalls(components: ComponentScores): HealthScoreShortfalls {
+  const impacts = getHealthScoreImpacts(components);
+  return {
+    glucose: impacts.glucose?.shortfall ?? null,
+    sleep: impacts.sleep?.shortfall ?? null,
+    heartRate: impacts.heartRate?.shortfall ?? null,
+  };
 }

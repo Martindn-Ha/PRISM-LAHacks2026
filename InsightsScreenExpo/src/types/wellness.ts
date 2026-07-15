@@ -1,4 +1,4 @@
-export type ScoreBand = 'good' | 'fair' | 'poor';
+export type ScoreBand = 'high' | 'medium' | 'low';
 
 export interface ScorePresentation {
   band: ScoreBand;

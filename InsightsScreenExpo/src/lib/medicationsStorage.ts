@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { type MedicationSchedule } from '../constants/medications';
+import { type MedicationRecurrence, type MedicationSchedule } from '../constants/medications';
+import { cancelMedicationNotification, syncMedicationNotification } from './medicationNotifications';
+import { expandMedicationRecurrenceDayKeys } from './medicationRecurrence';
 
 const MEDICATION_SCHEDULES_KEY = 'prism.medicationSchedules';
 
@@ -22,7 +24,27 @@ function sanitizeSchedule(raw: unknown): MedicationSchedule | null {
   const takenAt = row.takenAt == null ? null : typeof row.takenAt === 'string' ? row.takenAt : null;
   const deletedAt = row.deletedAt == null ? null : typeof row.deletedAt === 'string' ? row.deletedAt : null;
   const timeLabel = typeof row.timeLabel === 'string' && row.timeLabel.trim() ? row.timeLabel.trim() : undefined;
-  return { id, dayKey, name, timeLabel, takenAt, createdAt, deletedAt };
+  const timeHour =
+    typeof row.timeHour === 'number' && Number.isFinite(row.timeHour) ? Math.round(row.timeHour) : undefined;
+  const timeMinute =
+    typeof row.timeMinute === 'number' && Number.isFinite(row.timeMinute) ? Math.round(row.timeMinute) : undefined;
+  const seriesId = typeof row.seriesId === 'string' && row.seriesId.trim() ? row.seriesId.trim() : undefined;
+  const recurrenceRaw = row.recurrence;
+  const recurrence: MedicationRecurrence | undefined =
+    recurrenceRaw === 'once' || recurrenceRaw === 'daily' || recurrenceRaw === 'weekly' ? recurrenceRaw : undefined;
+  return {
+    id,
+    dayKey,
+    name,
+    timeLabel,
+    timeHour,
+    timeMinute,
+    seriesId,
+    recurrence,
+    takenAt,
+    createdAt,
+    deletedAt,
+  };
 }
 
 async function saveSchedules(schedules: MedicationSchedule[]): Promise<void> {
@@ -58,27 +80,84 @@ export type CreateMedicationScheduleInput = {
   dayKey: string;
   name: string;
   timeLabel?: string;
+  timeHour?: number;
+  timeMinute?: number;
+  recurrence?: MedicationRecurrence;
+  endDayKey?: string;
+  weekdays?: number[];
 };
 
-export async function createMedicationSchedule(input: CreateMedicationScheduleInput): Promise<MedicationSchedule> {
+export type UpdateMedicationScheduleInput = {
+  id: string;
+  dayKey: string;
+  name: string;
+  timeLabel?: string;
+  timeHour?: number;
+  timeMinute?: number;
+};
+
+export async function createMedicationSchedule(input: CreateMedicationScheduleInput): Promise<MedicationSchedule[]> {
   const name = input.name.trim();
   const dayKey = input.dayKey.trim();
   if (!name || !dayKey) {
     throw new Error('Medication name and day are required.');
   }
-  const schedule: MedicationSchedule = {
+
+  const recurrence: MedicationRecurrence = input.recurrence ?? 'once';
+  const endDayKey = (input.endDayKey ?? dayKey).trim();
+  const dayKeys = expandMedicationRecurrenceDayKeys({
+    startDayKey: dayKey,
+    endDayKey,
+    recurrence,
+    weekdays: input.weekdays,
+  });
+
+  const seriesId = recurrence === 'once' ? undefined : createId('medseries');
+  const createdAt = new Date().toISOString();
+  const created: MedicationSchedule[] = dayKeys.map((key) => ({
     id: createId('med'),
+    dayKey: key,
+    name,
+    timeLabel: input.timeLabel?.trim() || undefined,
+    timeHour: input.timeHour,
+    timeMinute: input.timeMinute,
+    seriesId,
+    recurrence,
+    takenAt: null,
+    createdAt,
+    deletedAt: null,
+  }));
+
+  const schedules = await loadAllMedicationSchedules();
+  schedules.unshift(...created);
+  await saveSchedules(schedules);
+  await Promise.all(created.map((schedule) => syncMedicationNotification(schedule)));
+  return created;
+}
+
+export async function updateMedicationSchedule(input: UpdateMedicationScheduleInput): Promise<MedicationSchedule | null> {
+  const name = input.name.trim();
+  const dayKey = input.dayKey.trim();
+  if (!name || !dayKey) {
+    throw new Error('Medication name and day are required.');
+  }
+  const schedules = await loadAllMedicationSchedules();
+  const index = schedules.findIndex((schedule) => schedule.id === input.id);
+  if (index < 0) {
+    return null;
+  }
+  const updated: MedicationSchedule = {
+    ...schedules[index]!,
     dayKey,
     name,
     timeLabel: input.timeLabel?.trim() || undefined,
-    takenAt: null,
-    createdAt: new Date().toISOString(),
-    deletedAt: null,
+    timeHour: input.timeHour,
+    timeMinute: input.timeMinute,
   };
-  const schedules = await loadAllMedicationSchedules();
-  schedules.unshift(schedule);
+  schedules[index] = updated;
   await saveSchedules(schedules);
-  return schedule;
+  await syncMedicationNotification(updated);
+  return updated;
 }
 
 export async function softDeleteMedicationSchedule(id: string): Promise<MedicationSchedule | null> {
@@ -93,6 +172,7 @@ export async function softDeleteMedicationSchedule(id: string): Promise<Medicati
   };
   schedules[index] = updated;
   await saveSchedules(schedules);
+  await cancelMedicationNotification(id);
   return updated;
 }
 
@@ -102,9 +182,11 @@ export async function toggleMedicationScheduleTaken(id: string, taken: boolean):
   if (index < 0) {
     return;
   }
-  schedules[index] = {
+  const updated: MedicationSchedule = {
     ...schedules[index]!,
     takenAt: taken ? new Date().toISOString() : null,
   };
+  schedules[index] = updated;
   await saveSchedules(schedules);
+  await syncMedicationNotification(updated);
 }

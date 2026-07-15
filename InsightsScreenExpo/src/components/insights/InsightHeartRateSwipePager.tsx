@@ -13,6 +13,7 @@ import Reanimated, {
 import { useDemoPalette } from '../../context/DemoPaletteContext';
 import { useTypography } from '../../context/TypographyContext';
 import type { ChartYRange } from '../../lib/insightChartAxis';
+import { logUiInteraction } from '../../lib/uiInteractionLog';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
 import { InsightHeartRateFixedYAxis } from './InsightHeartRateFixedYAxis';
 import { InsightHeartRateHorizontalGrid } from './InsightHeartRateHorizontalGrid';
@@ -36,6 +37,7 @@ type Props = {
   plotPadBottom: number;
   showHorizontalGrid: boolean;
   showYAxis?: boolean;
+  trackId?: string;
   renderPage: (offsetDelta: -1 | 0 | 1) => ReactNode;
 };
 
@@ -75,6 +77,7 @@ export function InsightHeartRateSwipePager({
   plotPadBottom,
   showHorizontalGrid,
   showYAxis = true,
+  trackId = 'insights.heartRate.page',
   renderPage,
 }: Props) {
   const { styles } = useTypography();
@@ -98,12 +101,14 @@ export function InsightHeartRateSwipePager({
   }, [dragStartX, plotWidth, swipeProgress, timeOffset, translateX]);
 
   const stepPast = useCallback(() => {
+    logUiInteraction({ target: trackId, gesture: 'swipe', direction: 'right' });
     onStepPast();
-  }, [onStepPast]);
+  }, [onStepPast, trackId]);
 
   const stepFuture = useCallback(() => {
+    logUiInteraction({ target: trackId, gesture: 'swipe', direction: 'left' });
     onStepFuture();
-  }, [onStepFuture]);
+  }, [onStepFuture, trackId]);
 
   const gesture = useMemo(
     () =>

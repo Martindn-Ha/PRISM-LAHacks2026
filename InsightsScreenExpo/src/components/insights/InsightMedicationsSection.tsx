@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { MEDICATIONS_SECTION_COLOR, todayDayKey, type MedicationSchedule } from '../../constants/medications';
 import { useDemoPalette } from '../../context/DemoPaletteContext';
 import { useTypography } from '../../context/TypographyContext';
 import { dayAdherence, nextPendingSchedulePreview } from '../../lib/medicationChecklist';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
+import { TrackedPressable } from '../TrackedPressable';
 
 type Props = {
   schedules: MedicationSchedule[];
@@ -30,7 +31,7 @@ export function InsightMedicationsSection({ schedules, onPress }: Props) {
         </View>
       </View>
       <View style={mergePaletteLayer(layers, 'insightsMetricSectionDivider', styles.insightsMetricSectionDivider)} />
-      <Pressable
+      <TrackedPressable
         accessibilityRole="button"
         onPress={onPress}
         style={({ pressed }) => [
@@ -38,6 +39,7 @@ export function InsightMedicationsSection({ schedules, onPress }: Props) {
           styles.medSummaryCard,
           pressed && styles.insightsMetricCardPressed,
         ]}
+        trackId="insights.medications"
       >
         <View style={[styles.insightsMetricCardBand, { backgroundColor: MEDICATIONS_SECTION_COLOR }]} />
         <View style={styles.medSummaryCardContent}>
@@ -55,7 +57,7 @@ export function InsightMedicationsSection({ schedules, onPress }: Props) {
             ) : null}
           </View>
         </View>
-      </Pressable>
+      </TrackedPressable>
     </View>
   );
 }

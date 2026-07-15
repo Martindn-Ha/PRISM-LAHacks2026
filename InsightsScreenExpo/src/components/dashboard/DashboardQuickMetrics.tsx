@@ -13,6 +13,7 @@ import {
 import { useDemoPalette } from '../../context/DemoPaletteContext';
 import { useTypography } from '../../context/TypographyContext';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
+import { logUiInteraction } from '../../lib/uiInteractionLog';
 import { InsightTabIcon } from '../icons/InsightTabIcon';
 
 type DashboardQuickActionSlotProps = {
@@ -41,17 +42,19 @@ function DashboardQuickActionSlot({
   const quickIconGlyphColor = theme?.textMuted ?? '#a1a1aa';
   const accentColor = dashboardQuickActionThemeColor(action);
   const onPressJS = useCallback(() => {
+    logUiInteraction({ target: `dashboard.quickMetrics.${action}`, gesture: 'tap' });
     onPress();
-  }, [onPress]);
+  }, [action, onPress]);
 
   const commitJS = useCallback(
     (fromIdx: number, dx: number) => {
       if (slotWidth <= 0) {
         return;
       }
+      logUiInteraction({ target: `dashboard.quickMetrics.reorder.${action}`, gesture: 'swipe' });
       onDragCommit(fromIdx, dx);
     },
-    [slotWidth, onDragCommit],
+    [action, slotWidth, onDragCommit],
   );
 
   const gesture = useMemo(() => {
@@ -66,6 +69,10 @@ function DashboardQuickActionSlot({
 
     const pan = Gesture.Pan()
       .activateAfterLongPress(450)
+      .onStart(() => {
+        'worklet';
+        draggingIndexSV.value = index;
+      })
       .onUpdate((e) => {
         dragTranslationSV.value = e.translationX;
       })

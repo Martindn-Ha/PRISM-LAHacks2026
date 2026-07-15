@@ -91,7 +91,7 @@ describe('normalizeCustomExportDateRange', () => {
 describe('buildJsonExport', () => {
   it('includes schema, health, and prism ipip sections', () => {
     const exportData: PrismExport = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       exportedAt: '2026-06-22T00:00:00.000Z',
       appVersion: '1.0.0',
       dateRange: { start: '2026-06-01T00:00:00.000Z', end: '2026-06-22T00:00:00.000Z' },
@@ -116,12 +116,18 @@ describe('buildJsonExport', () => {
         healthEvents: {
           events: [],
         },
+        location: {
+          points: [],
+        },
+        uiInteractions: {
+          events: [],
+        },
       },
       notes: { stepsAreDailyTotals: true },
     };
 
     const parsed = JSON.parse(buildJsonExport(exportData)) as PrismExport;
-    assert.equal(parsed.schemaVersion, 1);
+    assert.equal(parsed.schemaVersion, 2);
     assert.equal(parsed.health.heartRate?.length, 1);
     assert.equal(parsed.prism.ipip.answers['1'], 4);
     assert.equal(parsed.prism.ipip.isComplete, false);
@@ -131,7 +137,7 @@ describe('buildJsonExport', () => {
 describe('buildCsvFiles', () => {
   it('writes steps as daily totals and includes ipip answers when results are null', () => {
     const exportData: PrismExport = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       exportedAt: '2026-06-22T00:00:00.000Z',
       appVersion: '1.0.0',
       dateRange: { start: '2026-06-01T00:00:00.000Z', end: '2026-06-02T00:00:00.000Z' },
@@ -158,6 +164,23 @@ describe('buildCsvFiles', () => {
         healthEvents: {
           events: [],
         },
+        location: {
+          points: [
+            { at: '2026-06-01T12:00:00.000Z', lat: 34.05, lng: -118.25, accuracyMeters: 12 },
+          ],
+        },
+        uiInteractions: {
+          events: [
+            {
+              id: 'ui-1',
+              at: '2026-06-01T12:05:00.000Z',
+              screen: 'Dashboard',
+              gesture: 'tap',
+              target: 'nav.Dashboard',
+              direction: '',
+            },
+          ],
+        },
       },
       notes: { stepsAreDailyTotals: true },
     };
@@ -167,10 +190,20 @@ describe('buildCsvFiles', () => {
     assert.match(files['steps.csv'], /2026-06-01,5000,steps/);
     assert.match(files['prism_ipip.csv'], /answer,2,3/);
     assert.equal(files['prism_ipip.csv'].split('\n').filter(Boolean).length, 2);
+    assert.match(files['location.csv'], /at,lat,lng,accuracyMeters/);
+    assert.match(files['location.csv'], /2026-06-01T12:00:00.000Z,34.05,-118.25,12/);
+    assert.match(files['uiInteractions.csv'], /at,screen,gesture,target,direction,id/);
+    assert.match(files['uiInteractions.csv'], /Dashboard,tap,nav\.Dashboard/);
 
-    const manifest = JSON.parse(files['manifest.json']) as { ipip: { isComplete: boolean; answeredCount: number } };
+    const manifest = JSON.parse(files['manifest.json']) as {
+      ipip: { isComplete: boolean; answeredCount: number };
+      location: { rows: number };
+      uiInteractions: { rows: number };
+    };
     assert.equal(manifest.ipip.isComplete, false);
     assert.equal(manifest.ipip.answeredCount, 1);
+    assert.equal(manifest.location.rows, 1);
+    assert.equal(manifest.uiInteractions.rows, 1);
   });
 });
 
@@ -192,6 +225,28 @@ describe('collectPrismExportData', () => {
         goals: [],
         medicationSchedules: [],
         healthEvents: [],
+        location: [
+          { at: '2026-06-01T11:00:00.000Z', lat: 34.1, lng: -118.3 },
+          { at: '2026-05-01T11:00:00.000Z', lat: 1, lng: 1 },
+        ],
+        uiInteractions: [
+          {
+            id: 'ui-1',
+            at: '2026-06-01T11:30:00.000Z',
+            screen: 'Dashboard',
+            gesture: 'tap',
+            target: 'nav.Dashboard',
+            direction: '',
+          },
+          {
+            id: 'ui-old',
+            at: '2026-05-01T11:30:00.000Z',
+            screen: 'Dashboard',
+            gesture: 'tap',
+            target: 'nav.Insights',
+            direction: '',
+          },
+        ],
       },
       '1.0.0',
       (next) => {
@@ -206,5 +261,9 @@ describe('collectPrismExportData', () => {
     assert.equal((exportData.health.workouts as Array<{ activityName: string }>)[0]?.activityName, 'Running');
     assert.ok(exportData.unavailableMetrics.includes('restingHeartRate'));
     assert.equal(exportData.notes.stepsAreDailyTotals, true);
+    assert.equal(exportData.prism.location.points.length, 1);
+    assert.equal(exportData.prism.location.points[0]?.lat, 34.1);
+    assert.equal(exportData.prism.uiInteractions.events.length, 1);
+    assert.equal(exportData.prism.uiInteractions.events[0]?.target, 'nav.Dashboard');
   });
 });

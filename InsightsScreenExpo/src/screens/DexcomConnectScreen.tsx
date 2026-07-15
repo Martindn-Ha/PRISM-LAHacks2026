@@ -6,7 +6,6 @@ import {
   ScrollView,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { useDemoPalette } from '../context/DemoPaletteContext';
@@ -15,6 +14,7 @@ import { clearDexcomCredentials, getDexcomCredentials, getDexcomLinked, saveDexc
 import { validateDexcomCredentials } from '../lib/dexcom/dexcomShareClient';
 import type { DexcomRegion } from '../lib/dexcom/types';
 import { mergePaletteLayer } from '../theme/demoPaletteTheme';
+import { TrackedTouchableOpacity } from '../components/TrackedTouchableOpacity';
 
 type Props = {
   onClose: () => void;
@@ -111,9 +111,9 @@ export default function DexcomConnectScreen({ onClose, onLinked }: Props) {
     <View style={mergePaletteLayer(layers, 'profileShowcaseBackdrop', styles.profileShowcaseBackdrop)}>
       <View style={mergePaletteLayer(layers, 'profileShowcaseCard', styles.profileShowcaseCard)}>
         <View style={styles.profileShowcaseHeader}>
-          <TouchableOpacity accessibilityRole="button" onPress={onClose} style={styles.profileShowcaseBackBtn}>
+          <TrackedTouchableOpacity accessibilityRole="button" onPress={onClose} style={styles.profileShowcaseBackBtn} trackId="dexcom.back">
             <Ionicons name="chevron-back" size={22} color={theme?.textPrimary ?? '#f8fafc'} />
-          </TouchableOpacity>
+          </TrackedTouchableOpacity>
           <View style={styles.profileShowcaseHeaderText}>
             <Text style={mergePaletteLayer(layers, 'profileShowcaseTitle', styles.profileShowcaseTitle)}>Connect Dexcom</Text>
           </View>
@@ -134,17 +134,18 @@ export default function DexcomConnectScreen({ onClose, onLinked }: Props) {
                   {REGION_OPTIONS.map((option) => {
                     const active = region === option.id;
                     return (
-                      <TouchableOpacity
+                      <TrackedTouchableOpacity
                         key={option.id}
                         accessibilityRole="button"
                         disabled={saving}
                         onPress={() => setRegion(option.id)}
                         style={[styles.profileExportSegmentBtn, active && styles.profileExportSegmentBtnActive]}
+                        trackId={`dexcom.region.${option.id}`}
                       >
                         <Text style={[styles.profileExportSegmentBtnText, active && styles.profileExportSegmentBtnTextActive]}>
                           {option.label}
                         </Text>
-                      </TouchableOpacity>
+                      </TrackedTouchableOpacity>
                     );
                   })}
                 </View>
@@ -171,23 +172,24 @@ export default function DexcomConnectScreen({ onClose, onLinked }: Props) {
                   value={password}
                 />
 
-                <TouchableOpacity
+                <TrackedTouchableOpacity
                   accessibilityRole="button"
                   disabled={saving}
                   onPress={() => {
                     void handleLink();
                   }}
                   style={[styles.profileExportPrimaryBtn, saving && styles.profileExportPrimaryBtnDisabled]}
+                  trackId="dexcom.connect"
                 >
                   <Text style={styles.profileExportPrimaryBtnText}>
                     {saving ? 'Connecting…' : linked ? 'Update connection' : 'Connect Dexcom'}
                   </Text>
-                </TouchableOpacity>
+                </TrackedTouchableOpacity>
 
                 {linked ? (
-                  <TouchableOpacity accessibilityRole="button" disabled={saving} onPress={handleUnlink} style={styles.profileExportDateBtn}>
+                  <TrackedTouchableOpacity accessibilityRole="button" disabled={saving} onPress={handleUnlink} style={styles.profileExportDateBtn} trackId="dexcom.disconnect">
                     <Text style={styles.profileExportDateBtnText}>Disconnect Dexcom</Text>
-                  </TouchableOpacity>
+                  </TrackedTouchableOpacity>
                 ) : null}
               </>
             )}
