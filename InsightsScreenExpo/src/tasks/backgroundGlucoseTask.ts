@@ -2,15 +2,10 @@ import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
 import { healthKit } from '../lib/appleHealthKit';
 import { processGlucoseEventsIfEnabled } from '../lib/processGlucoseEvents';
-import { isLocationCorrelationEnabled } from '../lib/locationCorrelationSettings';
 
 export const BACKGROUND_GLUCOSE_TASK_NAME = 'PRISM_BACKGROUND_GLUCOSE_TASK';
 
 TaskManager.defineTask(BACKGROUND_GLUCOSE_TASK_NAME, async () => {
-  const enabled = await isLocationCorrelationEnabled();
-  if (!enabled) {
-    return BackgroundTask.BackgroundTaskResult.Success;
-  }
   try {
     await processGlucoseEventsIfEnabled(healthKit);
     return BackgroundTask.BackgroundTaskResult.Success;

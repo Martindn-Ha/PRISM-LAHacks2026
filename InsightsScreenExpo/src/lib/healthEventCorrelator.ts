@@ -1,5 +1,3 @@
-import type { LocationMatchResult } from './locationTrail';
-
 export const GLUCOSE_RANGE_MIN = 70;
 export const GLUCOSE_RANGE_MAX = 140;
 export const GLUCOSE_SEVERE_HIGH = 170;
@@ -28,11 +26,6 @@ export type HealthCorrelatedEvent = {
   glucoseAt: string;
   glucoseSource: 'healthkit' | 'dexcom';
   direction: HealthEventDirection;
-  latitude?: number;
-  longitude?: number;
-  locationAt?: string;
-  locationAccuracyMeters?: number;
-  locationGapMs?: number;
 };
 
 export function classifyGlucoseState(valueMgDl: number): GlucoseRangeState {
@@ -80,23 +73,20 @@ function levelForDirection(direction: HealthEventDirection): 'info' | 'warn' | '
   return 'info';
 }
 
-function messageForEvent(direction: HealthEventDirection, valueMgDl: number, location: LocationMatchResult | null): string {
+function messageForEvent(direction: HealthEventDirection, valueMgDl: number): string {
   const value = Math.round(valueMgDl);
-  const locationSuffix = location
-    ? ` Near ${location.lat.toFixed(5)}, ${location.lng.toFixed(5)}.`
-    : ' Location unavailable.';
 
   switch (direction) {
     case 'entered_low':
-      return `Low glucose: ${value} mg/dL (below ${GLUCOSE_RANGE_MIN}).${locationSuffix}`;
+      return `Low glucose: ${value} mg/dL (below ${GLUCOSE_RANGE_MIN}).`;
     case 'entered_high':
-      return `High glucose: ${value} mg/dL (above ${GLUCOSE_RANGE_MAX}).${locationSuffix}`;
+      return `High glucose: ${value} mg/dL (above ${GLUCOSE_RANGE_MAX}).`;
     case 'entered_severe_high':
-      return `Severe high glucose: ${value} mg/dL (≥${GLUCOSE_SEVERE_HIGH}).${locationSuffix}`;
+      return `Severe high glucose: ${value} mg/dL (≥${GLUCOSE_SEVERE_HIGH}).`;
     case 'returned_in_range':
-      return `Glucose returned to range: ${value} mg/dL (${GLUCOSE_RANGE_MIN}–${GLUCOSE_RANGE_MAX}).${locationSuffix}`;
+      return `Glucose returned to range: ${value} mg/dL (${GLUCOSE_RANGE_MIN}–${GLUCOSE_RANGE_MAX}).`;
     default:
-      return `Glucose event: ${value} mg/dL.${locationSuffix}`;
+      return `Glucose event: ${value} mg/dL.`;
   }
 }
 
@@ -107,7 +97,6 @@ function eventId(timestampMs: number, direction: HealthEventDirection): string {
 export function correlateGlucoseSamples(
   samples: GlucoseSampleInput[],
   previousState: GlucoseRangeState,
-  matchLocation: (timestampMs: number) => LocationMatchResult | null,
   existingEventIds: Set<string>,
 ): { events: HealthCorrelatedEvent[]; nextState: GlucoseRangeState } {
   const sorted = [...samples].sort((a, b) => a.timestampMs - b.timestampMs);
@@ -132,7 +121,6 @@ export function correlateGlucoseSamples(
       continue;
     }
 
-    const location = matchLocation(sample.timestampMs);
     const glucoseAt = new Date(sample.timestampMs).toISOString();
 
     events.push({
@@ -140,16 +128,11 @@ export function correlateGlucoseSamples(
       at: new Date().toISOString(),
       level: levelForDirection(direction),
       source: 'alert:glucose',
-      message: messageForEvent(direction, sample.valueMgDl, location),
+      message: messageForEvent(direction, sample.valueMgDl),
       glucoseValue: sample.valueMgDl,
       glucoseAt,
       glucoseSource: sample.source,
       direction,
-      latitude: location?.lat,
-      longitude: location?.lng,
-      locationAt: location?.locationAt,
-      locationAccuracyMeters: location?.accuracyMeters,
-      locationGapMs: location?.gapMs,
     });
   }
 

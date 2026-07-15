@@ -8,7 +8,6 @@ import {
   Platform,
   ScrollView,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { useDemoPalette } from '../context/DemoPaletteContext';
@@ -21,6 +20,7 @@ import {
   type ExportFormat,
 } from '../lib/healthDataExport';
 import { mergePaletteLayer } from '../theme/demoPaletteTheme';
+import { TrackedTouchableOpacity } from '../components/TrackedTouchableOpacity';
 
 type Props = {
   onClose: () => void;
@@ -111,9 +111,9 @@ export default function ProfileShowcaseScreen({ onClose }: Props) {
     <View style={mergePaletteLayer(layers, 'profileShowcaseBackdrop', styles.profileShowcaseBackdrop)}>
       <View style={mergePaletteLayer(layers, 'profileShowcaseCard', styles.profileShowcaseCard)}>
         <View style={styles.profileShowcaseHeader}>
-          <TouchableOpacity accessibilityRole="button" onPress={onClose} style={styles.profileShowcaseBackBtn}>
+          <TrackedTouchableOpacity accessibilityRole="button" onPress={onClose} style={styles.profileShowcaseBackBtn} trackId="profile.back">
             <Ionicons name="chevron-back" size={22} color={theme?.textPrimary ?? '#f8fafc'} />
-          </TouchableOpacity>
+          </TrackedTouchableOpacity>
           <View style={styles.profileShowcaseHeaderText}>
             <Text style={mergePaletteLayer(layers, 'profileShowcaseTitle', styles.profileShowcaseTitle)}>Export Data</Text>
           </View>
@@ -128,17 +128,18 @@ export default function ProfileShowcaseScreen({ onClose }: Props) {
                 {DATE_RANGE_OPTIONS.map((option) => {
                   const active = rangePreset === option.id;
                   return (
-                    <TouchableOpacity
+                    <TrackedTouchableOpacity
                       key={option.id}
                       accessibilityRole="button"
                       disabled={isExporting}
                       onPress={() => setRangePreset(option.id)}
                       style={[styles.profileExportSegmentBtn, active && styles.profileExportSegmentBtnActive]}
+                      trackId={`profile.export.range.${option.id}`}
                     >
                       <Text style={[styles.profileExportSegmentBtnText, active && styles.profileExportSegmentBtnTextActive]}>
                         {option.label}
                       </Text>
-                    </TouchableOpacity>
+                    </TrackedTouchableOpacity>
                   );
                 })}
               </View>
@@ -147,25 +148,27 @@ export default function ProfileShowcaseScreen({ onClose }: Props) {
                 <View style={styles.profileExportCustomRange}>
                   <View style={styles.profileExportDateRow}>
                     <Text style={styles.profileExportDateLabel}>From</Text>
-                    <TouchableOpacity
+                    <TrackedTouchableOpacity
                       accessibilityRole="button"
                       disabled={isExporting}
                       onPress={() => setActiveDateField('start')}
                       style={styles.profileExportDateBtn}
+                      trackId="profile.export.customStart"
                     >
                       <Text style={styles.profileExportDateBtnText}>{formatExportDisplayDate(customStart)}</Text>
-                    </TouchableOpacity>
+                    </TrackedTouchableOpacity>
                   </View>
                   <View style={styles.profileExportDateRow}>
                     <Text style={styles.profileExportDateLabel}>To</Text>
-                    <TouchableOpacity
+                    <TrackedTouchableOpacity
                       accessibilityRole="button"
                       disabled={isExporting}
                       onPress={() => setActiveDateField('end')}
                       style={styles.profileExportDateBtn}
+                      trackId="profile.export.customEnd"
                     >
                       <Text style={styles.profileExportDateBtnText}>{formatExportDisplayDate(customEnd)}</Text>
-                    </TouchableOpacity>
+                    </TrackedTouchableOpacity>
                   </View>
 
                   {activeDateField && Platform.OS === 'ios' ? (
@@ -174,9 +177,9 @@ export default function ProfileShowcaseScreen({ onClose }: Props) {
                         <Text style={styles.profileExportDatePickerTitle}>
                           {activeDateField === 'start' ? 'Start date' : 'End date'}
                         </Text>
-                        <TouchableOpacity accessibilityRole="button" onPress={() => setActiveDateField(null)}>
+                        <TrackedTouchableOpacity accessibilityRole="button" onPress={() => setActiveDateField(null)} trackId="profile.export.dateDone">
                           <Text style={styles.profileExportDatePickerDone}>Done</Text>
-                        </TouchableOpacity>
+                        </TrackedTouchableOpacity>
                       </View>
                       <DateTimePicker
                         display="spinner"
@@ -199,32 +202,34 @@ export default function ProfileShowcaseScreen({ onClose }: Props) {
                 {FORMAT_OPTIONS.map((option) => {
                   const active = format === option.id;
                   return (
-                    <TouchableOpacity
+                    <TrackedTouchableOpacity
                       key={option.id}
                       accessibilityRole="button"
                       disabled={isExporting}
                       onPress={() => setFormat(option.id)}
                       style={[styles.profileExportSegmentBtn, active && styles.profileExportSegmentBtnActive]}
+                      trackId={`profile.export.format.${option.id}`}
                     >
                       <Text style={[styles.profileExportSegmentBtnText, active && styles.profileExportSegmentBtnTextActive]}>
                         {option.label}
                       </Text>
-                    </TouchableOpacity>
+                    </TrackedTouchableOpacity>
                   );
                 })}
               </View>
             </View>
 
-            <TouchableOpacity
+            <TrackedTouchableOpacity
               accessibilityRole="button"
               disabled={isExporting}
               onPress={() => {
                 void handleExport();
               }}
               style={[styles.profileExportPrimaryBtn, isExporting && styles.profileExportPrimaryBtnDisabled]}
+              trackId="profile.export.submit"
             >
               <Text style={styles.profileExportPrimaryBtnText}>{isExporting ? 'Preparing export…' : 'Export my data'}</Text>
-            </TouchableOpacity>
+            </TrackedTouchableOpacity>
 
             <Text style={styles.profileExportPrivacyText}>
               Contains health data and personality results. Only share with people or services you trust.

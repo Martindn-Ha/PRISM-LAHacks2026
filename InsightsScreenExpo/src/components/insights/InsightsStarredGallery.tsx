@@ -4,7 +4,6 @@ import {
   NativeSyntheticEvent,
   ScrollView,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import {
@@ -18,6 +17,7 @@ import { useTypography } from '../../context/TypographyContext';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
 import { InsightsFavoriteSparkPage } from './InsightsFavoriteSparkPage';
 import { DashboardGlucoseGalleryPage } from '../dashboard/DashboardGlucoseGalleryPage';
+import { TrackedTouchableOpacity } from '../TrackedTouchableOpacity';
 import { DashboardHeartRateGalleryPage } from '../dashboard/DashboardHeartRateGalleryPage';
 
 type GalleryPage = { metric: InsightTab; pageKey: string };
@@ -125,7 +125,7 @@ export function InsightsStarredGallery({
           </ScrollView>
           <View style={styles.insightsStarredGalleryDots}>
             {galleryMetrics.map((m, idx) => (
-              <TouchableOpacity
+              <TrackedTouchableOpacity
                 key={`starred-gallery-dot-${m}-${idx}`}
                 accessibilityLabel={`Show ${m}`}
                 hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
@@ -139,6 +139,7 @@ export function InsightsStarredGallery({
                   idx === starredGalleryIndex && styles.insightsStarredGalleryDotActive,
                   { backgroundColor: idx === starredGalleryIndex ? QUICK_ACTION_THEME_COLOR_BY_TAB[m] : 'rgba(148,163,184,0.35)' },
                 ]}
+                trackId={`insights.starredGallery.dot.${m}`}
               />
             ))}
           </View>

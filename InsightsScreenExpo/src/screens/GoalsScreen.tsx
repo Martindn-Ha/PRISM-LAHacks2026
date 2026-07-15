@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { formatGoalTarget, goalDisplayTitle, type MetricGoal } from '../constants/goals';
 import type { InsightContent, InsightTab } from '../constants/insights';
 import { useDemoPalette } from '../context/DemoPaletteContext';
 import { useTypography } from '../context/TypographyContext';
 import { computeGoalProgressFromInsight } from '../lib/goalProgress';
 import { mergePaletteLayer } from '../theme/demoPaletteTheme';
+import { TrackedPressable } from '../components/TrackedPressable';
+import { TrackedTouchableOpacity } from '../components/TrackedTouchableOpacity';
 
 type Props = {
   goals: MetricGoal[];
@@ -42,9 +44,9 @@ export default function GoalsScreen({ goals, insightContentByTab, onCreatePress,
         showsVerticalScrollIndicator={false}
         style={styles.goalsScroll}
       >
-        <TouchableOpacity onPress={onCreatePress} style={styles.createPersonalChallengeBtn}>
+        <TrackedTouchableOpacity onPress={onCreatePress} style={styles.createPersonalChallengeBtn} trackId="goals.create">
           <Text style={styles.createPersonalChallengeBtnText}>+ New goal</Text>
-        </TouchableOpacity>
+        </TrackedTouchableOpacity>
 
         {goals.length === 0 ? (
           <Text style={mergePaletteLayer(layers, 'goalsCardDetail', styles.goalsEmptyText)}>
@@ -55,11 +57,12 @@ export default function GoalsScreen({ goals, insightContentByTab, onCreatePress,
             const progress = computeGoalProgressFromInsight(goal, insightContentByTab[goal.metric]);
             const progressPct = progress.progress != null ? Math.round(progress.progress * 100) : 0;
             return (
-              <TouchableOpacity
+              <TrackedTouchableOpacity
                 key={goal.id}
                 activeOpacity={0.85}
                 onPress={() => setSelectedGoal(goal)}
                 style={mergePaletteLayer(layers, 'goalsCard', styles.goalsCard)}
+                trackId={`goals.card.${goal.id}`}
               >
                 <Text numberOfLines={2} style={mergePaletteLayer(layers, 'goalsCardTitle', styles.goalsCardTitle)}>
                   {goalDisplayTitle(goal)}
@@ -76,14 +79,14 @@ export default function GoalsScreen({ goals, insightContentByTab, onCreatePress,
                     <Text style={styles.challengeProgressLabel}>{progressPct}%</Text>
                   </View>
                 ) : null}
-              </TouchableOpacity>
+              </TrackedTouchableOpacity>
             );
           })
         )}
       </ScrollView>
 
       <Modal animationType="fade" onRequestClose={() => setSelectedGoal(null)} transparent visible={selectedGoal != null}>
-        <Pressable onPress={() => setSelectedGoal(null)} style={styles.challengeDetailBackdrop}>
+        <TrackedPressable onPress={() => setSelectedGoal(null)} style={styles.challengeDetailBackdrop} trackId="goals.detail.backdrop">
           <Pressable onPress={() => {}} style={mergePaletteLayer(layers, 'challengeModalCard', styles.challengeModalCard)}>
             {selectedGoal ? (
               <>
@@ -95,20 +98,25 @@ export default function GoalsScreen({ goals, insightContentByTab, onCreatePress,
                 </Text>
                 <Text style={mergePaletteLayer(layers, 'goalsCardMeta', styles.challengeModalHint)}>{formatGoalTarget(selectedGoal)}</Text>
                 <View style={styles.challengeModalActions}>
-                  <TouchableOpacity
+                  <TrackedTouchableOpacity
                     onPress={() => confirmDelete(selectedGoal)}
                     style={mergePaletteLayer(layers, 'challengeModalCancelBtn', styles.challengeModalCancelBtn)}
+                    trackId={`goals.detail.delete.${selectedGoal.id}`}
                   >
                     <Text style={mergePaletteLayer(layers, 'challengeModalCancelText', styles.challengeModalCancelText)}>Delete</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => setSelectedGoal(null)} style={mergePaletteLayer(layers, 'challengeModalCreateBtn', styles.challengeModalCreateBtn)}>
+                  </TrackedTouchableOpacity>
+                  <TrackedTouchableOpacity
+                    onPress={() => setSelectedGoal(null)}
+                    style={mergePaletteLayer(layers, 'challengeModalCreateBtn', styles.challengeModalCreateBtn)}
+                    trackId="goals.detail.close"
+                  >
                     <Text style={mergePaletteLayer(layers, 'challengeModalCreateText', styles.challengeModalCreateText)}>Close</Text>
-                  </TouchableOpacity>
+                  </TrackedTouchableOpacity>
                 </View>
               </>
             ) : null}
           </Pressable>
-        </Pressable>
+        </TrackedPressable>
       </Modal>
     </View>
   );

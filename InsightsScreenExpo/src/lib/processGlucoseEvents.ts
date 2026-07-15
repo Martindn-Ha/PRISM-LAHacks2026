@@ -10,8 +10,6 @@ import {
   saveLastProcessedSampleMs,
   type HealthCorrelatedEvent,
 } from './healthEventStorage';
-import { loadTrail, matchLocationAtTime } from './locationTrail';
-import { isLocationCorrelationEnabled } from './locationCorrelationSettings';
 import { areEventNotificationsMuted } from './eventNotificationSettings';
 import { Notifications } from './expoNotifications';
 
@@ -99,11 +97,9 @@ export type ProcessGlucoseEventsResult = {
 };
 
 export async function processGlucoseEvents(healthKit: HealthKitApi, now = new Date()): Promise<ProcessGlucoseEventsResult> {
-  const correlationEnabled = await isLocationCorrelationEnabled();
-  const [cursorMs, previousState, trail, existingEvents] = await Promise.all([
+  const [cursorMs, previousState, existingEvents] = await Promise.all([
     loadLastProcessedSampleMs(),
     loadGlucoseRangeState(),
-    correlationEnabled ? loadTrail() : Promise.resolve([]),
     loadHealthEvents(),
   ]);
 
@@ -117,12 +113,7 @@ export async function processGlucoseEvents(healthKit: HealthKitApi, now = new Da
   const newSamples = mapped.filter((sample) => sample.timestampMs > cursorMs);
 
   const existingEventIds = new Set(existingEvents.map((event) => event.id));
-  const { events, nextState } = correlateGlucoseSamples(
-    newSamples,
-    previousState,
-    (timestampMs) => (correlationEnabled ? matchLocationAtTime(trail, timestampMs) : null),
-    existingEventIds,
-  );
+  const { events, nextState } = correlateGlucoseSamples(newSamples, previousState, existingEventIds);
 
   if (newSamples.length > 0) {
     const maxTs = Math.max(...newSamples.map((sample) => sample.timestampMs));
@@ -137,9 +128,5 @@ export async function processGlucoseEvents(healthKit: HealthKitApi, now = new Da
 }
 
 export async function processGlucoseEventsIfEnabled(healthKit: HealthKitApi): Promise<ProcessGlucoseEventsResult | null> {
-  const enabled = await isLocationCorrelationEnabled();
-  if (!enabled) {
-    return null;
-  }
   return processGlucoseEvents(healthKit);
 }

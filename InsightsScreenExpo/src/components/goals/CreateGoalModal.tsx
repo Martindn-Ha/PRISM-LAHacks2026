@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   buildGoalPickerSections,
   defaultConfigForMetric,
@@ -18,6 +18,8 @@ import { useTypography } from '../../context/TypographyContext';
 import type { CreateGoalInput } from '../../lib/goalsStorage';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
 import { InsightTabIcon } from '../icons/InsightTabIcon';
+import { TrackedPressable } from '../TrackedPressable';
+import { TrackedTouchableOpacity } from '../TrackedTouchableOpacity';
 
 type Props = {
   visible: boolean;
@@ -128,7 +130,7 @@ export function CreateGoalModal({ visible, insightContentByTab, healthKitReady, 
 
   return (
     <Modal animationType="slide" onRequestClose={onClose} transparent visible={visible}>
-      <Pressable onPress={onClose} style={mergePaletteLayer(layers, 'quickMetricsPickerBackdrop', styles.quickMetricsPickerBackdrop)}>
+      <TrackedPressable onPress={onClose} style={mergePaletteLayer(layers, 'quickMetricsPickerBackdrop', styles.quickMetricsPickerBackdrop)} trackId="goalModal.backdrop">
         <Pressable onPress={() => {}} style={mergePaletteLayer(layers, 'quickMetricsPickerCard', styles.quickMetricsPickerCard)}>
           <View style={styles.quickMetricsPickerHeader}>
             <View style={styles.quickMetricsPickerHeaderText}>
@@ -137,9 +139,9 @@ export function CreateGoalModal({ visible, insightContentByTab, healthKitReady, 
                 Pick a metric PRISM already tracks from Apple Health
               </Text>
             </View>
-            <TouchableOpacity accessibilityLabel="Close goal creator" onPress={onClose} style={styles.quickMetricsPickerCloseBtn}>
+            <TrackedTouchableOpacity accessibilityLabel="Close goal creator" onPress={onClose} style={styles.quickMetricsPickerCloseBtn} trackId="goalModal.close">
               <Text style={{ color: mutedColor, fontSize: 22 }}>×</Text>
-            </TouchableOpacity>
+            </TrackedTouchableOpacity>
           </View>
 
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} style={styles.quickMetricsPickerScroll}>
@@ -160,13 +162,14 @@ export function CreateGoalModal({ visible, insightContentByTab, healthKitReady, 
                   const isSelected = selectedMetric === metric;
                   const accent = QUICK_ACTION_THEME_COLOR_BY_TAB[metric] ?? section.color;
                   return (
-                    <TouchableOpacity
+                    <TrackedTouchableOpacity
                       key={metric}
                       onPress={() => setSelectedMetric(metric)}
                       style={[
                         mergePaletteLayer(layers, 'quickMetricsPickerRow', styles.quickMetricsPickerRow),
                         isSelected && styles.quickMetricsPickerRowSelected,
                       ]}
+                      trackId={`goalModal.metric.${metric}`}
                     >
                       <View style={[styles.quickMetricsPickerRowIcon, { borderColor: accent }]}>
                         <InsightTabIcon color={mutedColor} metric={metric} size={18} />
@@ -177,7 +180,7 @@ export function CreateGoalModal({ visible, insightContentByTab, healthKitReady, 
                       >
                         {insightTabLabel(metric)}
                       </Text>
-                    </TouchableOpacity>
+                    </TrackedTouchableOpacity>
                   );
                 })}
               </View>
@@ -190,13 +193,14 @@ export function CreateGoalModal({ visible, insightContentByTab, healthKitReady, 
 
                 <View style={styles.goalPeriodRow}>
                   {(['daily', 'weekly'] as GoalPeriod[]).map((option) => (
-                    <TouchableOpacity
+                    <TrackedTouchableOpacity
                       key={option}
                       onPress={() => setPeriod(option)}
                       style={[
                         mergePaletteLayer(layers, 'goalsTab', styles.goalsTab),
                         period === option && mergePaletteLayer(layers, 'goalsTabActive', styles.goalsTabActive),
                       ]}
+                      trackId={`goalModal.period.${option}`}
                     >
                       <Text
                         style={[
@@ -206,7 +210,7 @@ export function CreateGoalModal({ visible, insightContentByTab, healthKitReady, 
                       >
                         {option === 'daily' ? 'Daily' : 'Weekly'}
                       </Text>
-                    </TouchableOpacity>
+                    </TrackedTouchableOpacity>
                   ))}
                 </View>
 
@@ -270,18 +274,19 @@ export function CreateGoalModal({ visible, insightContentByTab, healthKitReady, 
             ) : null}
           </ScrollView>
 
-          <TouchableOpacity
+          <TrackedTouchableOpacity
             disabled={!canCreate}
             onPress={handleCreate}
             style={[
               mergePaletteLayer(layers, 'quickMetricsPickerDoneBtn', styles.quickMetricsPickerDoneBtn),
               !canCreate && styles.goalCreateBtnDisabled,
             ]}
+            trackId="goalModal.create"
           >
             <Text style={mergePaletteLayer(layers, 'quickMetricsPickerDoneText', styles.quickMetricsPickerDoneText)}>Create goal</Text>
-          </TouchableOpacity>
+          </TrackedTouchableOpacity>
         </Pressable>
-      </Pressable>
+      </TrackedPressable>
     </Modal>
   );
 }

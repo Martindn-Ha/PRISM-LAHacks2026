@@ -1,14 +1,14 @@
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 
 type HealthKitGlucoseObserverModule = {
-  startObserving?: () => Promise<void>;
-  stopObserving?: () => Promise<void>;
+  startGlucoseObserver?: () => Promise<void>;
+  stopGlucoseObserver?: () => Promise<void>;
 };
 
 const NativeObserver = NativeModules.HealthKitGlucoseObserver as HealthKitGlucoseObserverModule | undefined;
 
 export function isHealthKitGlucoseObserverAvailable(): boolean {
-  return Platform.OS === 'ios' && NativeObserver?.startObserving != null;
+  return Platform.OS === 'ios' && NativeObserver?.startGlucoseObserver != null;
 }
 
 export async function startHealthKitGlucoseObserver(): Promise<boolean> {
@@ -16,7 +16,7 @@ export async function startHealthKitGlucoseObserver(): Promise<boolean> {
     return false;
   }
   try {
-    await NativeObserver!.startObserving!();
+    await NativeObserver!.startGlucoseObserver!();
     return true;
   } catch {
     return false;
@@ -24,11 +24,11 @@ export async function startHealthKitGlucoseObserver(): Promise<boolean> {
 }
 
 export async function stopHealthKitGlucoseObserver(): Promise<void> {
-  if (!NativeObserver?.stopObserving) {
+  if (!NativeObserver?.stopGlucoseObserver) {
     return;
   }
   try {
-    await NativeObserver.stopObserving();
+    await NativeObserver.stopGlucoseObserver();
   } catch {
     // Ignore stop failures.
   }

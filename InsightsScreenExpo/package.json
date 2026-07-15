@@ -14,7 +14,8 @@
     "test:glucose": "tsx --test src/lib/glucoseProvider.test.ts",
     "test:export": "tsx --test src/lib/healthDataExport.test.ts",
     "test:health-events": "tsx --test src/lib/healthEventCorrelator.test.ts",
-    "test:location-trail": "tsx --test src/lib/locationTrail.test.ts",
+    "test:location": "tsx --test src/lib/locationLog.test.ts",
+    "test:ui-interactions": "tsx --test src/lib/uiInteractionStorage.test.ts",
     "test:goals": "tsx --test src/lib/goalProgress.test.ts",
     "test:medications": "tsx --test src/lib/medicationChecklist.test.ts"
   },

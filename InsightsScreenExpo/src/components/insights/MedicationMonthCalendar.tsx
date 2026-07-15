@@ -1,9 +1,10 @@
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { MEDICATIONS_SECTION_COLOR, WEEKDAY_LABELS } from '../../constants/medications';
 import { useDemoPalette } from '../../context/DemoPaletteContext';
 import { useTypography } from '../../context/TypographyContext';
 import { buildMonthCalendar, formatMonthLabel, type CalendarCell } from '../../lib/medicationCalendar';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
+import { TrackedTouchableOpacity } from '../TrackedTouchableOpacity';
 
 type Props = {
   year: number;
@@ -42,15 +43,25 @@ export function MedicationMonthCalendar({
   return (
     <View style={mergePaletteLayer(layers, 'goalsCard', styles.medCalendarCard)}>
       <View style={styles.medCalendarHeader}>
-        <TouchableOpacity accessibilityLabel="Previous month" onPress={onPrevMonth} style={styles.medCalendarNavBtn}>
+        <TrackedTouchableOpacity
+          accessibilityLabel="Previous month"
+          onPress={onPrevMonth}
+          style={styles.medCalendarNavBtn}
+          trackId="medications.calendar.prevMonth"
+        >
           <Text style={[styles.medCalendarNavText, { color: textColor }]}>‹</Text>
-        </TouchableOpacity>
+        </TrackedTouchableOpacity>
         <Text style={[mergePaletteLayer(layers, 'goalsCardTitle', styles.medCalendarMonthLabel), { color: textColor }]}>
           {formatMonthLabel(year, month)}
         </Text>
-        <TouchableOpacity accessibilityLabel="Next month" onPress={onNextMonth} style={styles.medCalendarNavBtn}>
+        <TrackedTouchableOpacity
+          accessibilityLabel="Next month"
+          onPress={onNextMonth}
+          style={styles.medCalendarNavBtn}
+          trackId="medications.calendar.nextMonth"
+        >
           <Text style={[styles.medCalendarNavText, { color: textColor }]}>›</Text>
-        </TouchableOpacity>
+        </TrackedTouchableOpacity>
       </View>
 
       <View style={styles.medCalendarWeekdayRow}>
@@ -70,7 +81,7 @@ export function MedicationMonthCalendar({
             const selected = cell.dayKey === selectedDayKey;
             const hasSchedules = daysWithSchedules.has(cell.dayKey);
             return (
-              <TouchableOpacity
+              <TrackedTouchableOpacity
                 key={cell.dayKey}
                 accessibilityLabel={`${cell.dayNum}`}
                 onPress={() => onSelectDay(cell.dayKey!)}
@@ -79,6 +90,7 @@ export function MedicationMonthCalendar({
                   selected && styles.medCalendarDayCellSelected,
                   cell.isToday && !selected && styles.medCalendarDayCellToday,
                 ]}
+                trackId={`medications.calendar.day.${cell.dayKey}`}
               >
                 <Text
                   style={[
@@ -90,7 +102,7 @@ export function MedicationMonthCalendar({
                   {cell.dayNum}
                 </Text>
                 {hasSchedules ? <View style={[styles.medCalendarDot, { backgroundColor: MEDICATIONS_SECTION_COLOR }]} /> : null}
-              </TouchableOpacity>
+              </TrackedTouchableOpacity>
             );
           })}
         </View>

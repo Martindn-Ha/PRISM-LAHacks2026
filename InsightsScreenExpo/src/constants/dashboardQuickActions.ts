@@ -5,6 +5,7 @@ import {
   QUICK_ACTION_METRIC_OPTIONS,
   QUICK_ACTION_THEME_COLOR_BY_TAB,
   insightTabLabel,
+  resolveInsightDetailTab,
   type InsightTab,
 } from './insights';
 
@@ -49,10 +50,16 @@ export const DASHBOARD_QUICK_ACTION_FALLBACKS: DashboardQuickAction[] = [
 export function normalizeDashboardQuickActions(actions: DashboardQuickAction[]): DashboardQuickAction[] {
   const unique: DashboardQuickAction[] = [];
   for (const action of actions) {
-    if (!isDashboardQuickAction(action) || unique.includes(action)) {
+    if (!isDashboardQuickAction(action)) {
       continue;
     }
-    unique.push(action);
+    const resolved = isDashboardQuickActionMedications(action)
+      ? action
+      : resolveInsightDetailTab(action);
+    if (unique.includes(resolved)) {
+      continue;
+    }
+    unique.push(resolved);
     if (unique.length >= DASHBOARD_QUICK_ACTION_SLOTS) {
       break;
     }

@@ -15,8 +15,16 @@ import {
   type PrismGoalExportRow,
 } from './goalProgress';
 import type { HealthCorrelatedEvent } from './healthEventCorrelator';
+import {
+  filterLocationLogForExport,
+  type LocationPoint,
+} from './locationLog';
+import {
+  filterUiInteractionsForExport,
+  type UiInteractionEvent,
+} from './uiInteractionStorage';
 
-export const EXPORT_SCHEMA_VERSION = 1;
+export const EXPORT_SCHEMA_VERSION = 2;
 
 export type ExportDateRangePreset = 'last30days' | 'last12months' | 'allTime' | 'custom';
 
@@ -165,15 +173,35 @@ export type HealthEventExportRow = {
   direction: string;
   level: string;
   source: string;
-  lat: string;
-  lng: string;
-  locationAt: string;
-  locationGapMs: string;
   message: string;
 };
 
 export type PrismHealthEventsExport = {
   events: HealthEventExportRow[];
+};
+
+export type LocationExportRow = {
+  at: string;
+  lat: number;
+  lng: number;
+  accuracyMeters?: number;
+};
+
+export type PrismLocationExport = {
+  points: LocationExportRow[];
+};
+
+export type UiInteractionExportRow = {
+  id: string;
+  at: string;
+  screen: string;
+  gesture: string;
+  target: string;
+  direction: string;
+};
+
+export type PrismUiInteractionsExport = {
+  events: UiInteractionExportRow[];
 };
 
 export type PrismExport = {
@@ -188,6 +216,8 @@ export type PrismExport = {
     goals: PrismGoalsExport;
     medications: PrismMedicationsExport;
     healthEvents: PrismHealthEventsExport;
+    location: PrismLocationExport;
+    uiInteractions: PrismUiInteractionsExport;
   };
   notes: {
     stepsAreDailyTotals: boolean;
@@ -571,7 +601,10 @@ function buildMetricDefinitions(kit: HealthKitExportApi): MetricDefinition[] {
       label: 'Blood Glucose',
       isAvailable: () => !!kit.getBloodGlucoseSamples,
       fetch: (range) =>
-        promisifySamples(kit.getBloodGlucoseSamples, baseOptions(range)).then((s) => mapNumericSamples(s, 'mg/dL')),
+        promisifySamples(kit.getBloodGlucoseSamples, {
+          ...baseOptions(range),
+          unit: kit.Constants?.Units?.mgPerdL ?? 'mgPerdL',
+        }).then((s) => mapNumericSamples(s, 'mg/dL')),
     },
     {
       key: 'workouts',
@@ -585,7 +618,14 @@ function buildMetricDefinitions(kit: HealthKitExportApi): MetricDefinition[] {
 export async function collectPrismExportData(
   range: ExportDateRange,
   kit: HealthKitExportApi,
-  prism: { ipip: PrismIpipExport; goals: MetricGoal[]; medicationSchedules: MedicationSchedule[]; healthEvents: HealthCorrelatedEvent[] },
+  prism: {
+    ipip: PrismIpipExport;
+    goals: MetricGoal[];
+    medicationSchedules: MedicationSchedule[];
+    healthEvents: HealthCorrelatedEvent[];
+    location: LocationPoint[];
+    uiInteractions: UiInteractionEvent[];
+  },
   appVersion: string,
   onProgress?: (progress: ExportProgress) => void,
 ): Promise<PrismExport> {
@@ -621,6 +661,8 @@ export async function collectPrismExportData(
     filterSchedulesInDateRange(prism.medicationSchedules, dateRange),
   );
   const healthEvents = serializeHealthEventsForExport(prism.healthEvents, dateRange);
+  const location = serializeLocationForExport(prism.location, dateRange);
+  const uiInteractions = serializeUiInteractionsForExport(prism.uiInteractions, dateRange);
 
   return {
     schemaVersion: EXPORT_SCHEMA_VERSION,
@@ -640,6 +682,12 @@ export async function collectPrismExportData(
       },
       healthEvents: {
         events: healthEvents,
+      },
+      location: {
+        points: location,
+      },
+      uiInteractions: {
+        events: uiInteractions,
       },
     },
     notes: {
@@ -807,20 +855,38 @@ export function buildCsvFiles(exportData: PrismExport): Record<string, string> {
   );
 
   files['healthEvents.csv'] = rowsToCsv(
-    ['glucoseAt', 'value', 'unit', 'direction', 'lat', 'lng', 'locationAt', 'locationGapMs', 'source', 'level', 'loggedAt', 'message'],
+    ['glucoseAt', 'value', 'unit', 'direction', 'source', 'level', 'loggedAt', 'message'],
     exportData.prism.healthEvents.events.map((row) => ({
       glucoseAt: row.glucoseAt,
       value: row.value,
       unit: row.unit,
       direction: row.direction,
-      lat: row.lat,
-      lng: row.lng,
-      locationAt: row.locationAt,
-      locationGapMs: row.locationGapMs,
       source: row.source,
       level: row.level,
       loggedAt: row.loggedAt,
       message: row.message,
+    })),
+  );
+
+  files['location.csv'] = rowsToCsv(
+    ['at', 'lat', 'lng', 'accuracyMeters'],
+    exportData.prism.location.points.map((row) => ({
+      at: row.at,
+      lat: row.lat,
+      lng: row.lng,
+      accuracyMeters: row.accuracyMeters ?? '',
+    })),
+  );
+
+  files['uiInteractions.csv'] = rowsToCsv(
+    ['at', 'screen', 'gesture', 'target', 'direction', 'id'],
+    exportData.prism.uiInteractions.events.map((row) => ({
+      at: row.at,
+      screen: row.screen,
+      gesture: row.gesture,
+      target: row.target,
+      direction: row.direction,
+      id: row.id,
     })),
   );
 
@@ -851,6 +917,12 @@ export function buildCsvFiles(exportData: PrismExport): Record<string, string> {
       },
       healthEvents: {
         rows: exportData.prism.healthEvents.events.length,
+      },
+      location: {
+        rows: exportData.prism.location.points.length,
+      },
+      uiInteractions: {
+        rows: exportData.prism.uiInteractions.events.length,
       },
     },
     null,
@@ -894,10 +966,32 @@ export function serializeHealthEventsForExport(
       direction: event.direction,
       level: event.level,
       source: event.glucoseSource,
-      lat: event.latitude != null ? String(event.latitude) : '',
-      lng: event.longitude != null ? String(event.longitude) : '',
-      locationAt: event.locationAt ?? '',
-      locationGapMs: event.locationGapMs != null ? String(event.locationGapMs) : '',
       message: event.message,
     }));
+}
+
+export function serializeLocationForExport(
+  points: LocationPoint[],
+  dateRange: { start: string; end: string },
+): LocationExportRow[] {
+  return filterLocationLogForExport(points, dateRange).map((point) => ({
+    at: point.at,
+    lat: point.lat,
+    lng: point.lng,
+    accuracyMeters: point.accuracyMeters,
+  }));
+}
+
+export function serializeUiInteractionsForExport(
+  events: UiInteractionEvent[],
+  dateRange: { start: string; end: string },
+): UiInteractionExportRow[] {
+  return filterUiInteractionsForExport(events, dateRange).map((event) => ({
+    id: event.id,
+    at: event.at,
+    screen: event.screen,
+    gesture: event.gesture,
+    target: event.target,
+    direction: event.direction,
+  }));
 }

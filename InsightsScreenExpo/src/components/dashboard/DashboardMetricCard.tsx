@@ -1,16 +1,23 @@
 import { useMemo, useState } from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { useDemoPalette } from '../../context/DemoPaletteContext';
 import { useTypography } from '../../context/TypographyContext';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
+import { TrackedTouchableOpacity } from '../TrackedTouchableOpacity';
 
 type DashboardMetricCardProps = {
   label: string;
   value: string;
   unit: string;
   subtitle?: string;
+  /**
+   * Health-score impact for this metric when it is part of today’s score.
+   * Red −shortfall when below perfect; otherwise green +contribution.
+   */
+  scoreImpact?: { contribution: number; shortfall: number } | null;
   accessibilityHint: string;
   accessibilityLabel: string;
+  trackId: string;
   onPress: () => void;
 };
 
@@ -29,8 +36,10 @@ export function DashboardMetricCard({
   value,
   unit,
   subtitle,
+  scoreImpact,
   accessibilityHint,
   accessibilityLabel,
+  trackId,
   onPress,
 }: DashboardMetricCardProps) {
   const { styles } = useTypography();
@@ -43,14 +52,32 @@ export function DashboardMetricCard({
     [maxValueFontSize, minValueFontSize, value, valueWidth],
   );
 
+  const impactLabel =
+    scoreImpact == null
+      ? value !== '—'
+        ? 'stale'
+        : null
+      : scoreImpact.shortfall > 0
+        ? `−${scoreImpact.shortfall}`
+        : `+${scoreImpact.contribution}`;
+  const impactIsShortfall = scoreImpact != null && scoreImpact.shortfall > 0;
+  const impactIsStale = impactLabel === 'stale';
+
   return (
-    <TouchableOpacity
+    <TrackedTouchableOpacity
       accessibilityHint={accessibilityHint}
-      accessibilityLabel={accessibilityLabel}
+      accessibilityLabel={
+        impactIsStale
+          ? `${accessibilityLabel}, not counting toward health score`
+          : impactLabel != null
+            ? `${accessibilityLabel}, ${impactLabel} health score points`
+            : accessibilityLabel
+      }
       accessibilityRole="button"
       activeOpacity={0.82}
       onPress={onPress}
       style={[mergePaletteLayer(layers, 'glassCard', styles.glassCard), styles.dashboardMetricCard]}
+      trackId={trackId}
     >
       <View style={styles.metricTitleRow}>
         <Text
@@ -85,24 +112,40 @@ export function DashboardMetricCard({
           {subtitle}
         </Text>
       ) : null}
-      <View
-        style={styles.metricValueWrap}
-        onLayout={(e) => {
-          const nextWidth = e.nativeEvent.layout.width;
-          setValueWidth((prev) => (prev === nextWidth ? prev : nextWidth));
-        }}
-      >
-        <Text
-          allowFontScaling={false}
-          numberOfLines={1}
-          style={[
-            mergePaletteLayer(layers, 'metricValue', styles.metricValue),
-            { fontSize: valueFontSize, lineHeight: Math.round(valueFontSize * 1.08) },
-          ]}
+      <View style={styles.metricValueBlock}>
+        <View
+          style={styles.metricValueWrap}
+          onLayout={(e) => {
+            const nextWidth = e.nativeEvent.layout.width;
+            setValueWidth((prev) => (prev === nextWidth ? prev : nextWidth));
+          }}
         >
-          {value}
-        </Text>
+          <Text
+            allowFontScaling={false}
+            numberOfLines={1}
+            style={[
+              mergePaletteLayer(layers, 'metricValue', styles.metricValue),
+              { fontSize: valueFontSize, lineHeight: Math.round(valueFontSize * 1.08) },
+            ]}
+          >
+            {value}
+          </Text>
+        </View>
+        {impactLabel != null ? (
+          <Text
+            style={[
+              styles.metricScoreShortfall,
+              impactIsStale
+                ? styles.metricScoreStale
+                : impactIsShortfall
+                  ? null
+                  : styles.metricScoreContribution,
+            ]}
+          >
+            {impactLabel}
+          </Text>
+        ) : null}
       </View>
-    </TouchableOpacity>
+    </TrackedTouchableOpacity>
   );
 }

@@ -3,8 +3,8 @@ import type { ScorePresentation } from '../types/wellness';
 export function getScorePresentation(score: number): ScorePresentation {
   if (score >= 80) {
     return {
-      band: 'good',
-      label: 'GOOD',
+      band: 'high',
+      label: 'HIGH',
       subtitle: 'Nice job!',
       color: '#22c55e',
     };
@@ -12,16 +12,16 @@ export function getScorePresentation(score: number): ScorePresentation {
 
   if (score <= 50) {
     return {
-      band: 'poor',
-      label: 'POOR',
+      band: 'low',
+      label: 'LOW',
       subtitle: "Don't give up!",
       color: '#ef4444',
     };
   }
 
   return {
-    band: 'fair',
-    label: 'FAIR',
+    band: 'medium',
+    label: 'MEDIUM',
     subtitle: "Keep going, you're making progress.",
     color: '#facc15',
   };

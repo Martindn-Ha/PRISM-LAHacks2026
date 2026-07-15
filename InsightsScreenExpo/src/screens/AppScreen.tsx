@@ -16,10 +16,8 @@ import {
   ScrollView,
   Share,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
-  TouchableOpacity,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -27,6 +25,8 @@ import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop, Text as SvgText } 
 import * as Contacts from 'expo-contacts';
 import { BottomNavBar } from '../components/navigation/BottomNavBar';
 import { AppHeader } from '../components/navigation/AppHeader';
+import { TrackedPressable } from '../components/TrackedPressable';
+import { TrackedTouchableOpacity } from '../components/TrackedTouchableOpacity';
 import { APP_DISPLAY_NAME } from '../constants/appBranding';
 import { useDemoPalette } from '../context/DemoPaletteContext';
 import { useTypography } from '../context/TypographyContext';
@@ -80,23 +80,22 @@ import {
   calculateOverallHealthScore,
   calculateSleepScore,
   filterReadingsToDay,
+  getHealthScoreImpacts,
   mapHealthKitSamplesToReadings,
+  type ComponentScores,
 } from '../lib/healthScoreFromMetrics';
+import { getHealthScoreRaiseTips } from '../lib/healthScoreTips';
 import { getHealthKitLinked, getHealthKitLastSyncedAtMs, setHealthKitLastSyncedAtMs, setHealthKitLinked } from '../lib/healthKitConnection';
 import { loadGlucoseData } from '../lib/glucoseProvider';
 import { loadHealthEvents, toAlertLogEvents } from '../lib/healthEventStorage';
 import { processGlucoseEventsIfEnabled } from '../lib/processGlucoseEvents';
-import { refreshHealthEventMonitoring, stopHealthEventMonitoring } from '../lib/healthEventMonitoring';
-import {
-  disableLocationCorrelation,
-  enableLocationCorrelation,
-  isLocationCorrelationEnabled,
-} from '../lib/locationCorrelationSettings';
-import { clearTrail } from '../lib/locationTrail';
+import { refreshHealthEventMonitoring } from '../lib/healthEventMonitoring';
+import { enableLocationCorrelation } from '../lib/locationCorrelationSettings';
 import {
   areEventNotificationsMuted,
   setEventNotificationsMuted,
 } from '../lib/eventNotificationSettings';
+import { logUiInteraction, setUiInteractionScreen } from '../lib/uiInteractionLog';
 import { toErrorText } from '../utils/format';
 import { getScorePresentation } from '../services/scoringService';
 import { useAppChrome } from '../hooks/useAppChrome';
@@ -214,6 +213,11 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [healthScore, setHealthScore] = useState<number | null>(null);
+  const [healthScoreComponents, setHealthScoreComponents] = useState<ComponentScores>({
+    glucose: null,
+    sleep: null,
+    heartRate: null,
+  });
   const [alertEventLog, setAlertEventLog] = useState<AlertLogEvent[]>([]);
   const [glucoseValue, setGlucoseValue] = useState(0);
   const [glucoseTrendArrow, setGlucoseTrendArrow] = useState<string | undefined>(undefined);
@@ -236,6 +240,7 @@ export default function App() {
   );
   const [medicationsOpenRequest, setMedicationsOpenRequest] = useState(0);
   const [showQuickMetricsPicker, setShowQuickMetricsPicker] = useState(false);
+  const [showHealthScoreInfo, setShowHealthScoreInfo] = useState(false);
   const [starredGalleryIndex, setStarredGalleryIndex] = useState(0);
 
   const insightsGalleryScrollPages = useMemo(() => {
@@ -353,16 +358,22 @@ export default function App() {
   const [showAlertsScreen, setShowAlertsScreen] = useState(false);
   const [showProfileScreen, setShowProfileScreen] = useState(false);
   const [eventNotificationsMuted, setEventNotificationsMutedState] = useState(false);
-  const [locationCorrelationEnabled, setLocationCorrelationEnabled] = useState(false);
-  const [locationToggleBusy, setLocationToggleBusy] = useState(false);
   const [startupPermissionsRequested, setStartupPermissionsRequested] = useState(false);
   const heartPulseAnim = useRef(new Animated.Value(0)).current;
   const alertBadgeBounceAnim = useRef(new Animated.Value(0)).current;
   const hasHealthScore = healthScore != null;
-  const displayScore = hasHealthScore ? healthScore.toFixed(1) : '—';
+  const displayScore = hasHealthScore ? String(Math.round(healthScore)) : '—';
   const scorePresentation = useMemo(
     () => (hasHealthScore ? getScorePresentation(Math.round(healthScore)) : null),
     [hasHealthScore, healthScore],
+  );
+  const healthScoreRaiseTips = useMemo(
+    () => getHealthScoreRaiseTips(healthScoreComponents),
+    [healthScoreComponents],
+  );
+  const healthScoreImpacts = useMemo(
+    () => getHealthScoreImpacts(healthScoreComponents),
+    [healthScoreComponents],
   );
   const metricNoDataColor = theme?.textMuted ?? '#64748b';
   const glucoseNow = Math.round(glucoseValue);
@@ -396,8 +407,10 @@ export default function App() {
     const events = await loadHealthEvents();
     const glucoseRows = toAlertLogEvents(events);
     setAlertEventLog((prev) => {
-      const nonGlucose = prev.filter((row) => row.source !== 'alert:glucose');
-      return [...glucoseRows, ...nonGlucose]
+      const other = prev.filter(
+        (row) => row.source !== 'alert:glucose',
+      );
+      return [...glucoseRows, ...other]
         .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
         .slice(0, 250);
     });
@@ -411,30 +424,41 @@ export default function App() {
     });
   }, []);
 
-  const handleLocationCorrelationToggle = useCallback(async (next: boolean) => {
-    if (locationToggleBusy) {
+  useEffect(() => {
+    if (showAlertsScreen) {
+      setUiInteractionScreen('Alerts');
       return;
     }
-    setLocationToggleBusy(true);
-    try {
-      if (next) {
-        const result = await enableLocationCorrelation();
-        if (!result.ok) {
-          Alert.alert('Location access needed', result.reason ?? 'Could not enable location correlation.');
-          setLocationCorrelationEnabled(false);
-          return;
-        }
-        await refreshHealthEventMonitoring();
-        setLocationCorrelationEnabled(true);
-      } else {
-        await disableLocationCorrelation(clearTrail);
-        await stopHealthEventMonitoring();
-        setLocationCorrelationEnabled(false);
-      }
-    } finally {
-      setLocationToggleBusy(false);
+    if (sidebarOpen) {
+      setUiInteractionScreen('Sidebar');
+      return;
     }
-  }, [locationToggleBusy]);
+    if (showProfileScreen) {
+      setUiInteractionScreen('Profile');
+      return;
+    }
+    if (showHealthScoreInfo) {
+      setUiInteractionScreen('HealthScoreInfo');
+      return;
+    }
+    if (showQuickMetricsPicker) {
+      setUiInteractionScreen('QuickMetrics');
+      return;
+    }
+    if (showCreateGoalModal) {
+      setUiInteractionScreen('CreateGoal');
+      return;
+    }
+    setUiInteractionScreen(activeTab);
+  }, [
+    activeTab,
+    showAlertsScreen,
+    sidebarOpen,
+    showProfileScreen,
+    showHealthScoreInfo,
+    showQuickMetricsPicker,
+    showCreateGoalModal,
+  ]);
 
   const prevHeartRateHighRef = useRef(false);
 
@@ -525,18 +549,21 @@ export default function App() {
           ? `${Math.round(glucoseValue)}${glucoseTrendArrow ? ` ${glucoseTrendArrow}` : ''}`
           : '—',
       unit: 'MG/DL',
+      scoreImpact: healthScoreImpacts.glucose,
     },
     {
       label: 'SLEEP' as const,
       insightTab: DASHBOARD_METRIC_INSIGHT_TAB.SLEEP,
       value: sleepNightHours != null ? sleepNightHours.toFixed(1) : '—',
       unit: 'HRS',
+      scoreImpact: healthScoreImpacts.sleep,
     },
     {
       label: 'HEART RATE' as const,
       insightTab: DASHBOARD_METRIC_INSIGHT_TAB['HEART RATE'],
       value: heartRateCardValue > 0 ? Math.round(heartRateCardValue).toString() : '—',
       unit: 'BPM',
+      scoreImpact: healthScoreImpacts.heartRate,
     },
   ];
 
@@ -992,7 +1019,7 @@ export default function App() {
                 sleepByDay.get(yesterdayKey) ?? 0,
               );
               if (recentNightRecorded) {
-                setActivitySleepMinutes(Math.round(Math.min(recentNightMinutes, 9 * 60 + 59)));
+                setActivitySleepMinutes(Math.round(recentNightMinutes));
               } else {
                 setActivitySleepMinutes(null);
               }
@@ -1542,7 +1569,15 @@ export default function App() {
 
       setHeartRateCardValue(heartRateValue > 0 ? heartRateValue : heartRateTodayLatest);
       setActivitySteps(todaySteps);
-      setGlucoseValue(Math.round(glucoseResult.currentValue));
+      setGlucoseValue(
+        Math.round(
+          glucoseResult.currentValue > 0
+            ? glucoseResult.currentValue
+            : todayGlucoseAvg > 0
+              ? todayGlucoseAvg
+              : 0,
+        ),
+      );
       setGlucoseTrendArrow(glucoseResult.trendArrow);
 
       const sleepHoursForScore = lastSleepNight != null ? lastSleepNight.totalHours : null;
@@ -1557,6 +1592,7 @@ export default function App() {
       const healthResult = calculateOverallHealthScore(glucoseScore, sleepScore, heartRateScore);
 
       setHealthScore(healthResult.score);
+      setHealthScoreComponents(healthResult.components);
 
       await setHealthKitLinked(true);
       const syncedAtMs = Date.now();
@@ -1608,7 +1644,15 @@ export default function App() {
       now,
     );
 
-    setGlucoseValue(Math.round(glucoseResult.currentValue));
+    setGlucoseValue(
+      Math.round(
+        glucoseResult.currentValue > 0
+          ? glucoseResult.currentValue
+          : todayGlucoseAvg > 0
+            ? todayGlucoseAvg
+            : 0,
+      ),
+    );
     setGlucoseTrendArrow(glucoseResult.trendArrow);
     setInsightContentByTab((prev) => ({
       ...prev,
@@ -1638,10 +1682,8 @@ export default function App() {
       },
     }));
 
-    if (await isLocationCorrelationEnabled()) {
-      await processGlucoseEventsIfEnabled(healthKit);
-      await refreshPersistedGlucoseEvents();
-    }
+    await processGlucoseEventsIfEnabled(healthKit);
+    await refreshPersistedGlucoseEvents();
   }, [healthKitStatus, refreshPersistedGlucoseEvents]);
 
   /** Poll glucose every 2 minutes while Dashboard or Insights is visible (Dexcom live + Stelo Health sync). */
@@ -1679,11 +1721,9 @@ export default function App() {
       ) {
         void refreshHealthKitAsync();
         void (async () => {
-          if (await isLocationCorrelationEnabled()) {
-            await refreshHealthEventMonitoring();
-            await processGlucoseEventsIfEnabled(healthKit);
-            await refreshPersistedGlucoseEvents();
-          }
+          await refreshHealthEventMonitoring();
+          await processGlucoseEventsIfEnabled(healthKit);
+          await refreshPersistedGlucoseEvents();
         })();
       }
     });
@@ -1692,15 +1732,13 @@ export default function App() {
 
   useEffect(() => {
     void areEventNotificationsMuted().then(setEventNotificationsMutedState);
-    void isLocationCorrelationEnabled().then(setLocationCorrelationEnabled);
   }, []);
 
   useEffect(() => {
     void refreshPersistedGlucoseEvents();
     void (async () => {
-      if (await isLocationCorrelationEnabled()) {
-        await refreshHealthEventMonitoring();
-      }
+      await enableLocationCorrelation();
+      await refreshHealthEventMonitoring();
     })();
   }, [refreshPersistedGlucoseEvents]);
 
@@ -1889,6 +1927,7 @@ export default function App() {
             Platform.OS === 'ios' ? (
               <RefreshControl
                 onRefresh={() => {
+                  logUiInteraction({ target: 'dashboard.pullToRefresh', gesture: 'tap' });
                   void refreshHealthKitAsync();
                 }}
                 refreshing={healthKitLoading && healthKitStatus === 'ready'}
@@ -1953,7 +1992,19 @@ export default function App() {
               </View>
               <View style={styles.scoreCenterStack}>
                 <Animated.Text style={[styles.scoreHeart, { opacity: heartPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.75, 1] }), transform: [{ scale: heartPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.08] }) }] }]}>♥</Animated.Text>
-                <Text style={mergePaletteLayer(layers, 'scoreLabel', styles.scoreLabel)}>HEALTH SCORE</Text>
+                <View style={styles.scoreLabelRow}>
+                  <Text style={mergePaletteLayer(layers, 'scoreLabel', styles.scoreLabel)}>HEALTH SCORE</Text>
+                  <TrackedTouchableOpacity
+                    accessibilityLabel="How health score works"
+                    accessibilityRole="button"
+                    hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                    onPress={() => setShowHealthScoreInfo(true)}
+                    style={styles.scoreInfoBtn}
+                    trackId="dashboard.healthScore.info"
+                  >
+                    <Ionicons color={theme?.textMuted ?? '#94a3b8'} name="information-circle-outline" size={14} />
+                  </TrackedTouchableOpacity>
+                </View>
                 <View style={styles.scoreRow}>
                   {hasHealthScore ? (
                     <>
@@ -1967,9 +2018,9 @@ export default function App() {
                 <Text
                   style={[
                     styles.scoreState,
-                    hasHealthScore && scorePresentation?.band === 'good'
+                    hasHealthScore && scorePresentation?.band === 'high'
                       ? styles.scoreStateGood
-                      : hasHealthScore && scorePresentation?.band === 'poor'
+                      : hasHealthScore && scorePresentation?.band === 'low'
                         ? styles.scoreStatePoor
                         : null,
                     !hasHealthScore && { color: metricNoDataColor },
@@ -1988,10 +2039,45 @@ export default function App() {
                   label={item.label}
                   unit={item.unit}
                   value={item.value}
+                  scoreImpact={item.scoreImpact}
+                  trackId={`dashboard.metric.${item.label}`}
                   onPress={() => openInsightFromDashboard(item.insightTab)}
                 />
               ))}
             </View>
+            {healthScoreRaiseTips.length > 0 ? (
+              <View style={styles.healthScoreTipsSection}>
+                <View style={styles.healthScoreTipsGallery}>
+                  {healthScoreRaiseTips.map((item) => (
+                    <View
+                      key={item.key}
+                      style={[
+                        styles.healthScoreTipCard,
+                        theme?.isLight ? styles.healthScoreTipCardLight : null,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.healthScoreTipCardLabel,
+                          theme?.isLight ? styles.healthScoreTipCardLabelLight : null,
+                        ]}
+                      >
+                        {item.label}
+                      </Text>
+                      <Text
+                        numberOfLines={2}
+                        style={[
+                          styles.healthScoreTipCardBody,
+                          theme?.isLight ? styles.healthScoreTipCardBodyLight : null,
+                        ]}
+                      >
+                        {item.tip}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ) : null}
             <InsightsStarredGallery
               galleryMetrics={DASHBOARD_GALLERY_METRICS}
               insightContentByTab={insightContentByTab}
@@ -2009,17 +2095,18 @@ export default function App() {
             <View style={styles.quickActionsSection}>
               <View style={styles.quickActionsHeaderRow}>
                 <Text style={mergePaletteLayer(layers, 'sectionLabel', styles.sectionLabel)}>QUICK ACTIONS</Text>
-                <TouchableOpacity
+                <TrackedTouchableOpacity
                   accessibilityLabel="Customize quick actions"
                   accessibilityRole="button"
                   onPress={() => setShowQuickMetricsPicker(true)}
                   style={mergePaletteLayer(layers, 'quickActionsCustomizeBtn', styles.quickActionsCustomizeBtn)}
+                  trackId="dashboard.quickMetrics.edit"
                 >
                   <Ionicons color={theme?.textMuted ?? '#94a3b8'} name="options-outline" size={13} />
                   <Text style={mergePaletteLayer(layers, 'quickActionsCustomizeText', styles.quickActionsCustomizeText)}>
                     Customize
                   </Text>
-                </TouchableOpacity>
+                </TrackedTouchableOpacity>
               </View>
               <DashboardQuickActionMetricsRow
                 metrics={dashboardQuickMetrics}
@@ -2100,6 +2187,45 @@ export default function App() {
       />
 
       <Modal
+        animationType="fade"
+        transparent
+        visible={showHealthScoreInfo}
+        onRequestClose={() => setShowHealthScoreInfo(false)}
+      >
+        <TrackedPressable onPress={() => setShowHealthScoreInfo(false)} style={styles.challengeDetailBackdrop} trackId="healthScoreInfo.backdrop">
+          <Pressable onPress={() => {}} style={mergePaletteLayer(layers, 'challengeModalCard', styles.challengeModalCard)}>
+            <Text style={mergePaletteLayer(layers, 'challengeModalTitle', styles.challengeModalTitle)}>How this works</Text>
+            <Text style={mergePaletteLayer(layers, 'challengeModalHint', styles.challengeModalHint)}>
+              Your daily score (0–100) reflects how well these measures stayed on track:
+            </Text>
+            <Text style={mergePaletteLayer(layers, 'challengeModalHint', styles.challengeModalHint)}>
+              {'\u2022'} Glucose — time spent in target range{'\n'}
+              {'\u2022'} Sleep — progress toward about 7 hours{'\n'}
+              {'\u2022'} Heart rate — time spent in usual range
+            </Text>
+            <Text style={mergePaletteLayer(layers, 'challengeModalHint', styles.challengeModalHint)}>
+              <Text style={{ color: '#22c55e', fontWeight: '700' }}>HIGH</Text>
+              {' is 80 or above. '}
+              <Text style={{ color: '#facc15', fontWeight: '700' }}>MEDIUM</Text>
+              {' is above 50 and below 80. '}
+              <Text style={{ color: '#ef4444', fontWeight: '700' }}>LOW</Text>
+              {' is 50 or below.'}
+            </Text>
+            <View style={styles.challengeModalActions}>
+              <TrackedTouchableOpacity
+                accessibilityLabel="Close health score info"
+                onPress={() => setShowHealthScoreInfo(false)}
+                style={mergePaletteLayer(layers, 'challengeModalCreateBtn', styles.challengeModalCreateBtn)}
+                trackId="healthScoreInfo.close"
+              >
+                <Text style={mergePaletteLayer(layers, 'challengeModalCreateText', styles.challengeModalCreateText)}>Got it</Text>
+              </TrackedTouchableOpacity>
+            </View>
+          </Pressable>
+        </TrackedPressable>
+      </Modal>
+
+      <Modal
         animationType="slide"
         transparent
         visible={showAlertsScreen}
@@ -2116,20 +2242,22 @@ export default function App() {
               <View style={styles.alertsHeaderTextWrap}>
                 <Text style={mergePaletteLayer(layers, 'alertsTitle', styles.alertsTitle)}>Event Logs</Text>
               </View>
-              <TouchableOpacity
+              <TrackedTouchableOpacity
                 accessibilityLabel="Close event logs"
                 onPress={() => setShowAlertsScreen(false)}
                 style={mergePaletteLayer(layers, 'alertsBackBtn', styles.alertsBackBtn)}
+                trackId="alerts.close"
               >
                 <Ionicons name="close" size={22} color={theme?.textPrimary ?? '#f8fafc'} />
-              </TouchableOpacity>
+              </TrackedTouchableOpacity>
             </View>
-            <TouchableOpacity
+            <TrackedTouchableOpacity
               accessibilityLabel={eventNotificationsMuted ? 'Unmute event notifications' : 'Mute event notifications'}
               accessibilityRole="button"
               accessibilityState={{ selected: eventNotificationsMuted }}
               onPress={toggleEventNotificationsMuted}
               style={mergePaletteLayer(layers, 'alertsMuteBtn', styles.alertsMuteBtn)}
+              trackId="alerts.mute"
             >
               <Ionicons
                 color={eventNotificationsMuted ? (theme?.textMuted ?? '#94a3b8') : (theme?.accent ?? '#38bdf8')}
@@ -2139,7 +2267,7 @@ export default function App() {
               <Text style={mergePaletteLayer(layers, 'alertsMuteBtnText', styles.alertsMuteBtnText)}>
                 {eventNotificationsMuted ? 'Notifications muted' : 'Mute notifications'}
               </Text>
-            </TouchableOpacity>
+            </TrackedTouchableOpacity>
             <View style={{ flex: 1, minHeight: 0 }}>
               <LogsScreen events={alertEventLog} omitHeading />
             </View>
@@ -2161,32 +2289,24 @@ export default function App() {
           <View style={mergePaletteLayer(layers, 'sidebarPanel', styles.sidebarPanel)}>
             <View style={styles.sidebarHeader}>
               <Text style={mergePaletteLayer(layers, 'sidebarTitle', styles.sidebarTitle)}>Menu</Text>
-              <TouchableOpacity onPress={() => setSidebarOpen(false)}>
+              <TrackedTouchableOpacity onPress={() => setSidebarOpen(false)} trackId="sidebar.close">
                 <Text style={mergePaletteLayer(layers, 'sidebarClose', styles.sidebarClose)}>×</Text>
-              </TouchableOpacity>
+              </TrackedTouchableOpacity>
             </View>
-            <TouchableOpacity
+            <TrackedTouchableOpacity
               style={styles.sidebarItem}
               onPress={() => {
                 setSidebarOpen(false);
                 setShowProfileScreen(true);
               }}
+              trackId="sidebar.exportData"
             >
               <Text style={mergePaletteLayer(layers, 'sidebarItemText', styles.sidebarItemText)}>Export Data</Text>
-            </TouchableOpacity>
-            <View style={styles.demoToggleRow}>
-              <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>Log location</Text>
-              <Switch
-                disabled={locationToggleBusy}
-                onValueChange={(value) => {
-                  void handleLocationCorrelationToggle(value);
-                }}
-                value={locationCorrelationEnabled}
-              />
-            </View>
-            <TouchableOpacity
+            </TrackedTouchableOpacity>
+            <TrackedTouchableOpacity
               onPress={() => setColorScheme(colorScheme === 'light' ? 'dark' : 'light')}
               style={styles.demoToggleRow}
+              trackId="sidebar.theme"
             >
               <Text style={mergePaletteLayer(layers, 'demoToggleLabel', styles.demoToggleLabel)}>Light mode</Text>
               <View
@@ -2204,9 +2324,9 @@ export default function App() {
                   {colorScheme === 'light' ? 'ON' : 'OFF'}
                 </Text>
               </View>
-            </TouchableOpacity>
+            </TrackedTouchableOpacity>
           </View>
-          <TouchableOpacity onPress={() => setSidebarOpen(false)} style={styles.sidebarScrim} />
+          <TrackedTouchableOpacity onPress={() => setSidebarOpen(false)} style={styles.sidebarScrim} trackId="sidebar.backdrop" />
         </View>
       ) : null}
     </View>

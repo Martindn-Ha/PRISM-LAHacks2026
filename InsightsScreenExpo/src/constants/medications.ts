@@ -1,8 +1,17 @@
+export type MedicationRecurrence = 'once' | 'daily' | 'weekly';
+
 export type MedicationSchedule = {
   id: string;
   dayKey: string;
   name: string;
   timeLabel?: string;
+  /** Local hour 0–23 when a time was chosen; used for notifications. */
+  timeHour?: number;
+  /** Local minute 0–59 when a time was chosen; used for notifications. */
+  timeMinute?: number;
+  /** Links doses created together from a recurring schedule. */
+  seriesId?: string;
+  recurrence?: MedicationRecurrence;
   takenAt: string | null;
   createdAt: string;
   deletedAt: string | null;

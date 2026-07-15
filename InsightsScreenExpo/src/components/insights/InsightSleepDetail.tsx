@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import {
   insightMetricLatestDisplay,
   isInsightMetricGreyedOut,
@@ -10,6 +10,7 @@ import {
 import { useDemoPalette } from '../../context/DemoPaletteContext';
 import { useTypography } from '../../context/TypographyContext';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
+import { TrackedPressable } from '../TrackedPressable';
 import { InsightMetricTimeMeta } from './InsightMetricTimeMeta';
 import { InsightSleepChartPanel } from './InsightSleepChartPanel';
 
@@ -54,7 +55,7 @@ export function InsightSleepDetail({ hub, healthKitReady, insightContentByTab, c
                 const isLast = index === section.rows.length - 1;
 
                 return (
-                  <Pressable
+                  <TrackedPressable
                     key={row.tab}
                     accessibilityRole="button"
                     accessibilityState={{ selected: isSelected }}
@@ -67,6 +68,7 @@ export function InsightSleepDetail({ hub, healthKitReady, insightContentByTab, c
                       greyedOut && styles.insightsHeartHubRowGreyedOut,
                       pressed && styles.insightsHeartHubRowPressed,
                     ]}
+                    trackId={`insights.sleep.hub.${row.tab}`}
                   >
                     <View style={styles.insightsHeartHubRowText}>
                       <Text
@@ -99,7 +101,7 @@ export function InsightSleepDetail({ hub, healthKitReady, insightContentByTab, c
                         {rowDisplay.unit}
                       </Text>
                     </View>
-                  </Pressable>
+                  </TrackedPressable>
                 );
               })}
             </View>

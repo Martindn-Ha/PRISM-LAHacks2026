@@ -2,7 +2,10 @@ import Constants from 'expo-constants';
 import { loadIpipProgress, loadIpipResults } from '../ipip/storage';
 import { loadAllGoals } from './goalsStorage';
 import { loadHealthEvents } from './healthEventStorage';
+import { loadLocationLog } from './locationLog';
 import { loadAllMedicationSchedules } from './medicationsStorage';
+import { flushUiInteractions } from './uiInteractionLog';
+import { loadUiInteractions } from './uiInteractionStorage';
 import { healthKit, type HealthKitApi } from './appleHealthKit';
 import {
   buildCsvZipExport,
@@ -18,6 +21,8 @@ import {
   type PrismGoalsExport,
   type PrismMedicationsExport,
   type PrismHealthEventsExport,
+  type PrismLocationExport,
+  type PrismUiInteractionsExport,
 } from './healthDataExportCore';
 
 export {
@@ -42,6 +47,8 @@ export {
   type PrismGoalsExport,
   type PrismMedicationsExport,
   type PrismHealthEventsExport,
+  type PrismLocationExport,
+  type PrismUiInteractionsExport,
 } from './healthDataExportCore';
 
 export function getAppVersion(): string {
@@ -53,13 +60,18 @@ export async function loadPrismAppData(): Promise<{
   goals: Awaited<ReturnType<typeof loadAllGoals>>;
   medicationSchedules: Awaited<ReturnType<typeof loadAllMedicationSchedules>>;
   healthEvents: Awaited<ReturnType<typeof loadHealthEvents>>;
+  location: Awaited<ReturnType<typeof loadLocationLog>>;
+  uiInteractions: Awaited<ReturnType<typeof loadUiInteractions>>;
 }> {
-  const [progress, results, goals, medicationSchedules, healthEvents] = await Promise.all([
+  await flushUiInteractions();
+  const [progress, results, goals, medicationSchedules, healthEvents, location, uiInteractions] = await Promise.all([
     loadIpipProgress(),
     loadIpipResults(),
     loadAllGoals(),
     loadAllMedicationSchedules(),
     loadHealthEvents(),
+    loadLocationLog(),
+    loadUiInteractions(),
   ]);
   return {
     ipip: {
@@ -70,6 +82,8 @@ export async function loadPrismAppData(): Promise<{
     goals,
     medicationSchedules,
     healthEvents,
+    location,
+    uiInteractions,
   };
 }
 

@@ -1786,7 +1786,8 @@ const baseStyleDefinitions = {
   },
   medDetailRoot: {
     gap: 10,
-    paddingBottom: 24,
+    paddingBottom: 120,
+    flexGrow: 1,
   },
   medDetailSubtitle: {
     marginTop: 0,
@@ -1942,6 +1943,83 @@ const baseStyleDefinitions = {
   medDayAddInput: {
     marginBottom: 0,
   },
+  medTimePickerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  medTimePickerCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.28)',
+    borderRadius: 12,
+    backgroundColor: 'rgba(15,23,42,0.55)',
+    paddingHorizontal: 8,
+    paddingBottom: 4,
+    overflow: 'hidden',
+  },
+  medTimePickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    paddingTop: 10,
+  },
+  medTimePickerHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  medTimePickerTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  medTimePickerClear: {
+    color: '#94a3b8',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  medTimePickerDone: {
+    color: '#38bdf8',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  medRecurrenceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  medRecurrenceChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
+    backgroundColor: 'rgba(15,23,42,0.35)',
+  },
+  medRecurrenceChipText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  medWeekdayRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 6,
+    marginTop: 2,
+  },
+  medWeekdayChip: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
+    backgroundColor: 'rgba(15,23,42,0.35)',
+  },
+  medWeekdayChipText: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
   medScheduleFormTitle: {
     marginTop: 8,
     marginBottom: 4,
@@ -1951,6 +2029,25 @@ const baseStyleDefinitions = {
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
+  },
+  medScheduleActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  medCancelEditBtn: {
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
+  },
+  medCancelEditBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
   },
   medScheduleBtnText: {
     color: '#0f172a',
@@ -3390,12 +3487,21 @@ const baseStyleDefinitions = {
     gap: 2,
     paddingTop: 70,
   },
+  scoreLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
   scoreLabel: {
     color: '#52525b',
     fontSize: 10,
     letterSpacing: 1.9,
     fontWeight: '700',
     textAlign: 'center',
+  },
+  scoreInfoBtn: {
+    padding: 2,
   },
   scoreHeart: {
     color: '#ef4444',
@@ -3453,6 +3559,50 @@ const baseStyleDefinitions = {
     alignItems: 'stretch',
     gap: 8,
   },
+  healthScoreTipsSection: {
+    gap: 8,
+    marginTop: 12,
+  },
+  healthScoreTipsGallery: {
+    gap: 8,
+  },
+  healthScoreTipCard: {
+    width: '100%',
+    alignSelf: 'stretch',
+    minHeight: 0,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#f0c14a',
+    backgroundColor: 'rgba(240, 193, 74, 0.12)',
+    padding: 12,
+    gap: 6,
+  },
+  healthScoreTipCardLabel: {
+    color: '#f0c14a',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  healthScoreTipCardBody: {
+    color: '#fde9a8',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 0,
+    marginBottom: 0,
+    alignSelf: 'stretch',
+    width: '100%',
+  },
+  healthScoreTipCardLight: {
+    borderColor: '#d4a017',
+    backgroundColor: 'rgba(240, 193, 74, 0.22)',
+  },
+  healthScoreTipCardLabelLight: {
+    color: '#a16207',
+  },
+  healthScoreTipCardBodyLight: {
+    color: '#713f12',
+  },
   glassCard: {
     flex: 1,
     minWidth: 0,
@@ -3490,10 +3640,14 @@ const baseStyleDefinitions = {
   metricTitleLabel: {
     flex: 1,
   },
+  metricValueBlock: {
+    marginTop: 4,
+    width: '100%',
+    minWidth: 0,
+  },
   metricValueWrap: {
     width: '100%',
     minWidth: 0,
-    marginTop: 4,
     overflow: 'hidden',
   },
   metricValue: {
@@ -3503,6 +3657,24 @@ const baseStyleDefinitions = {
     width: '100%',
     minWidth: 0,
     includeFontPadding: false,
+  },
+  metricScoreShortfall: {
+    color: '#ef4444',
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 14,
+    marginTop: 2,
+    alignSelf: 'flex-start',
+    flexShrink: 0,
+  },
+  metricScoreContribution: {
+    color: '#22c55e',
+  },
+  metricScoreStale: {
+    color: '#71717a',
+    fontSize: 9,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
   },
   metricUnit: {
     color: '#71717a',

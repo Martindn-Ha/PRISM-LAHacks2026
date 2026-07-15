@@ -338,6 +338,7 @@ export function InsightHeartRateChartPanel({
           timeOffset={timeOffset}
           yAxisSide={yAxisSide}
           yRange={fixedYRange}
+          trackId="insights.heartRate.page"
         />
       </View>
     </View>

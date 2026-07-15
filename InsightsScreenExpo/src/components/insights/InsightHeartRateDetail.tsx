@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import {
   insightMetricLatestDisplay,
   insightMetricChartStyle,
@@ -12,6 +12,7 @@ import {
 import { useDemoPalette } from '../../context/DemoPaletteContext';
 import { useTypography } from '../../context/TypographyContext';
 import { mergePaletteLayer } from '../../theme/demoPaletteTheme';
+import { TrackedPressable } from '../TrackedPressable';
 import { InsightHeartRateChartPanel } from './InsightHeartRateChartPanel';
 import { InsightMetricChart } from './InsightMetricChart';
 import { InsightMetricTimeMeta, useInsightMetricTimeLabel } from './InsightMetricTimeMeta';
@@ -88,7 +89,7 @@ export function InsightHeartRateDetail({ hub, healthKitReady, insightContentByTa
                 const isLast = index === section.rows.length - 1;
 
                 return (
-                  <Pressable
+                  <TrackedPressable
                     key={row.tab}
                     accessibilityRole="button"
                     accessibilityState={{ selected: isSelected }}
@@ -101,6 +102,7 @@ export function InsightHeartRateDetail({ hub, healthKitReady, insightContentByTa
                       greyedOut && styles.insightsHeartHubRowGreyedOut,
                       pressed && styles.insightsHeartHubRowPressed,
                     ]}
+                    trackId={`insights.heartRate.hub.${row.tab}`}
                   >
                     <View style={styles.insightsHeartHubRowText}>
                       <Text
@@ -133,7 +135,7 @@ export function InsightHeartRateDetail({ hub, healthKitReady, insightContentByTa
                         {rowDisplay.unit}
                       </Text>
                     </View>
-                  </Pressable>
+                  </TrackedPressable>
                 );
               })}
             </View>
