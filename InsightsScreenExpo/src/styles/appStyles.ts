@@ -1261,6 +1261,17 @@ const baseStyleDefinitions = {
     fontWeight: '700',
     marginLeft: 4,
   },
+  insightsGlucoseReadingTime: {
+    color: '#f8fafc',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  insightsGlucoseReadingValue: {
+    color: '#f8fafc',
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+  },
   insightsMetricCardSubtitle: {
     color: '#64748b',
     fontSize: 11,

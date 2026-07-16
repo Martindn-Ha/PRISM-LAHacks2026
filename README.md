@@ -9,13 +9,14 @@ Personal health insights app for iOS (Expo dev client) with optional Firebase Cl
 ## Features
 
 - **Dashboard** — configurable quick metrics (glucose, heart rate, sleep, steps, and more)
-- **Insights** — charts and detail views for Apple Health metrics
+- **Insights** — charts and detail views for Apple Health metrics (Blood Glucose includes a newest-first readings list)
 - **Glucose** — Apple HealthKit and optional Dexcom Share; background sampling and spike alerts
-- **Location correlation** — background location trail to match glucose events with places
+- **Location** — background location log (export separately; match to glucose by timestamp later)
 - **Goals** — passive progress from Health data
-- **Medications** — daily checklist and calendar
+- **Medications** — daily checklist, calendar, recurrence, and local reminders
 - **Personality** — on-device IPIP-120 questionnaire and scoring
-- **Data export** — CSV/ZIP export of selected Health metrics
+- **UI interactions** — always-on named tap/swipe logging for research export
+- **Data export** — CSV/ZIP of Health metrics plus Prism data (`uiInteractions.csv`, location, health events, goals, medications, IPIP)
 - **Optional Firebase** — Firestore progress posts and remote context when `EXPO_PUBLIC_FIREBASE_*` is set
 
 ## Project structure
@@ -103,9 +104,25 @@ npm run test:heart-rate-chart
 npm run test:glucose
 npm run test:export
 npm run test:health-events
-npm run test:location-trail
+npm run test:location
+npm run test:ui-interactions
 npm run test:goals
 npm run test:medications
+```
+
+## TestFlight (EAS)
+
+From `InsightsScreenExpo/` (requires Expo/EAS account and App Store Connect setup):
+
+```bash
+eas build --platform ios --profile production --auto-submit
+```
+
+Build only, then submit the latest artifact:
+
+```bash
+eas build --platform ios --profile production
+eas submit --platform ios --latest
 ```
 
 ## Deploy backend functions
