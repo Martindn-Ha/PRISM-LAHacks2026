@@ -10,6 +10,7 @@ import {
   insightTabLabel,
 } from '../constants/insights';
 import { InsightMetricHubDetail } from '../components/insights/InsightMetricHubDetail';
+import { InsightGlucoseDetail } from '../components/insights/InsightGlucoseDetail';
 import { InsightHeartRateDetail } from '../components/insights/InsightHeartRateDetail';
 import { InsightSleepDetail } from '../components/insights/InsightSleepDetail';
 import { InsightMetricSection } from '../components/insights/InsightMetricSection';
@@ -316,7 +317,12 @@ export default function InsightsScreen(props: Props) {
                       <Text style={mergePaletteLayer(layers, 'insightsTitle', styles.insightsTitle)}>{insightTabLabel(activeInsightTab)}</Text>
                     </View>
                   </View>
-                  {activeHub?.rootTab === 'Heart Rate' && insightContentByTab ? (
+                  {activeInsightTab === 'Blood Glucose' && insightContentByTab?.['Blood Glucose'] ? (
+                    <InsightGlucoseDetail
+                      content={insightContentByTab['Blood Glucose']}
+                      healthKitReady={healthKitStatus === 'ready'}
+                    />
+                  ) : activeHub?.rootTab === 'Heart Rate' && insightContentByTab ? (
                     <InsightHeartRateDetail
                       contentWidth={detailContentWidth}
                       healthKitReady={healthKitStatus === 'ready'}
